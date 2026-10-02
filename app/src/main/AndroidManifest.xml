@@ -2,10 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
     <uses-feature
         android:name="android.hardware.sensor.accelerometer"
         android:required="true" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepdetector"
+        android:required="false" />
 
     <application
         android:allowBackup="true"

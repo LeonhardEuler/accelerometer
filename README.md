@@ -1,21 +1,43 @@
 # Running Cadence
 
-A Java-only Android app that estimates running cadence from accelerometer
-impacts, finds tempo-matched songs using ReccoBeats, and controls playback in
-the installed Spotify app. There is no Kotlin or server component.
+A Java-only Android app that measures running cadence, finds tempo-matched songs
+using ReccoBeats, and controls playback in the installed Spotify app. It prefers
+Android's step detector and falls back to an accelerometer estimate. There is no
+Kotlin or server component.
 
 ## Open and run
 
 1. Open this directory in Android Studio.
 2. Let Android Studio install Android SDK 35 and sync Gradle.
 3. Run the `app` configuration on a physical Android phone.
-4. Choose a genre. For automatic playback, configure and connect Spotify as
+4. Allow **Physical activity** when prompted so the phone's step detector can be
+   used. The screen identifies the active measurement source.
+5. Choose a genre. For automatic playback, configure and connect Spotify as
    described below before running.
-5. Hold the phone securely or place it in a snug pocket and start running.
+6. Hold the phone securely or place it in a snug pocket and start running.
 
-No motion permission is required because the app reads the accelerometer
-directly. Cadence is calculated from a rolling 10-second step history and
-returns to zero two seconds after impacts stop.
+## Cadence measurement
+
+- On Android 10 and newer, the system step detector requires the runtime
+  `ACTIVITY_RECOGNITION` (Physical activity) permission. No location, microphone,
+  contacts, or background tracking permission is requested.
+- If the detector is unavailable, permission is declined, or it cannot start,
+  the app explicitly identifies the accelerometer fallback. **Enable phone step
+  detector** lets you grant permission later, including through app settings if
+  Android will no longer display the permission prompt.
+- The fallback removes gravity from the acceleration magnitude *without
+  rectifying the resulting signal*, and uses time-based smoothing and positive
+  peaks. This fixes the old detector sticking after its first impact during
+  continuous motion.
+- Both sources require at least five detected steps before displaying cadence.
+  The estimate averages consistent intervals among the last nine steps, rejecting
+  outliers around the median. One missed impact should not halve the estimate.
+  Cadence becomes zero two seconds after the last received step; Android's step
+  detection latency may delay that transition slightly.
+- Live diagnostics show accelerometer sampling rate, motion and the selected
+  source's step count. Refreshing does not require tapping a control.
+- The accelerometer-only path remains an estimate: loose placement, arm motion
+  and shaking can introduce errors. Screen taps are not a valid running simulation.
 
 ## Music matching
 
@@ -70,20 +92,27 @@ in, and authorized; track/account/region restrictions still apply.
 
 1. Register an Android integration in the Spotify Developer Dashboard.
 2. Register this exact redirect URI: `runningcadence://spotify-callback`.
-3. Add Android package `com.example.runningcadence` and the signing certificate's
-   SHA-1 fingerprint. Run `./gradlew :app:signingReport` to find the fingerprint
-   for the build installed on your device. Debug and release certificates differ.
-4. Set `spotifyClientId=YOUR_32_CHARACTER_CLIENT_ID` in your personal
-   `~/.gradle/gradle.properties`, or pass it to Gradle:
-
-   ```sh
-   ./gradlew :app:assembleDebug -PspotifyClientId=YOUR_32_CHARACTER_CLIENT_ID
-   ```
-
-5. Rebuild and install the app, tap **Connect Spotify**, and approve access.
+3. Open **Set up Spotify** or **Spotify settings** in the app. It displays the
+   installed APK's actual signing SHA-1, package and redirect URI, with a
+   **Copy registration details** button. Register those details in the dashboard.
+   Debug and release certificates differ.
+4. Paste the developer app's **Client ID** into the setup dialog and tap
+   **Save and connect**. It is saved on the device; no rebuild is required.
+5. Approve Spotify access when prompted.
    If consent temporarily opens Spotify, return to Running Cadence.
 6. Start running. A verified match is played automatically through Spotify when
    cadence is stable. **Play matched song** retries playback explicitly.
+
+If no client ID is configured, the connection button opens setup instead of
+silently repeating a status message. Missing Spotify installations and connection
+failures produce actionable dialogs, and a stalled connection times out after
+20 seconds rather than leaving the button disabled indefinitely.
+
+For development, a build-time default can still be set with
+`spotifyClientId=YOUR_32_CHARACTER_CLIENT_ID` in personal
+`~/.gradle/gradle.properties`, or
+`./gradlew :app:assembleDebug -PspotifyClientId=YOUR_32_CHARACTER_CLIENT_ID`.
+An ID saved in the app takes precedence.
 
 Do not put a Spotify client secret in this Android app. The client ID is a public
 application identifier. If the developer app is in development mode, authorize
@@ -113,6 +142,9 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`.
 End-to-end playback and real accelerometer accuracy need a physical phone and
 configured Spotify app.
 
+Install the rebuilt APK on the phone to pick up changes; editing this project
+does not update an already installed copy.
+
 ## API documentation
 
 - ReccoBeats recommendations: https://reccobeats.com/docs/apis/get-recommendation
@@ -120,6 +152,7 @@ configured Spotify app.
 - ReccoBeats terms: https://reccobeats.com/docs/documentation/terms-of-service
 - Spotify App Remote setup: https://developer.spotify.com/documentation/android/tutorials/getting-started
 - Spotify Android SDK release: https://github.com/spotify/android-sdk/releases/tag/v0.8.0-appremote_v2.1.0-auth
+- Android motion sensors: https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion
 
 ReccoBeats supplies its service as-is without availability or accuracy guarantees.
 Review its terms and Spotify's platform terms before distributing an integration.

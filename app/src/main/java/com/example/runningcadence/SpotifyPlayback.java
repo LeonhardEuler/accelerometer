@@ -1,6 +1,8 @@
 package com.example.runningcadence;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
 
 import com.spotify.android.appremote.api.ConnectionParams;
 import com.spotify.android.appremote.api.Connector;
@@ -8,8 +10,11 @@ import com.spotify.android.appremote.api.SpotifyAppRemote;
 import com.spotify.protocol.client.Subscription;
 import com.spotify.protocol.types.PlayerState;
 
+import java.util.concurrent.TimeoutException;
+
 public final class SpotifyPlayback {
     public static final String REDIRECT_URI = "runningcadence://spotify-callback";
+    private static final long CONNECT_TIMEOUT_MS = 20_000;
 
     public interface Listener {
         void onSpotifyConnected();
@@ -22,6 +27,8 @@ public final class SpotifyPlayback {
     private final Activity activity;
     private final String clientId;
     private final Listener listener;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable connectionTimeout;
     private SpotifyAppRemote remote;
     private Subscription<PlayerState> subscription;
     private boolean connecting;
@@ -48,6 +55,14 @@ public final class SpotifyPlayback {
         }
         int version = ++connectionVersion;
         connecting = true;
+        connectionTimeout = () -> {
+            if (version == connectionVersion && connecting) {
+                disconnect();
+                listener.onSpotifyConnectionFailed(
+                        new TimeoutException("Spotify did not respond within 20 seconds."));
+            }
+        };
+        handler.postDelayed(connectionTimeout, CONNECT_TIMEOUT_MS);
         ConnectionParams params = new ConnectionParams.Builder(clientId)
                 .setRedirectUri(REDIRECT_URI)
                 .showAuthView(showAuthorization)
@@ -59,6 +74,7 @@ public final class SpotifyPlayback {
                     SpotifyAppRemote.disconnect(connectedRemote);
                     return;
                 }
+                clearConnectionTimeout();
                 connecting = false;
                 remote = connectedRemote;
                 subscription = remote.getPlayerApi().subscribeToPlayerState();
@@ -77,6 +93,7 @@ public final class SpotifyPlayback {
             @Override
             public void onFailure(Throwable error) {
                 if (version == connectionVersion) {
+                    clearConnectionTimeout();
                     connecting = false;
                     listener.onSpotifyConnectionFailed(error);
                 }
@@ -104,6 +121,7 @@ public final class SpotifyPlayback {
     }
 
     public void disconnect() {
+        clearConnectionTimeout();
         connectionVersion++;
         playVersion++;
         connecting = false;
@@ -114,6 +132,13 @@ public final class SpotifyPlayback {
         if (remote != null) {
             SpotifyAppRemote.disconnect(remote);
             remote = null;
+        }
+    }
+
+    private void clearConnectionTimeout() {
+        if (connectionTimeout != null) {
+            handler.removeCallbacks(connectionTimeout);
+            connectionTimeout = null;
         }
     }
 }
