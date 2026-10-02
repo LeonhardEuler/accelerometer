@@ -1,0 +1,38 @@
+plugins {
+    id "com.android.application"
+}
+
+def spotifyClientId = providers.gradleProperty("spotifyClientId").orElse("").get()
+if (!spotifyClientId.isEmpty() && !(spotifyClientId ==~ /[a-fA-F0-9]{32}/)) {
+    throw new GradleException("spotifyClientId must be the 32-character Spotify client ID, not a client secret.")
+}
+
+android {
+    namespace "com.example.runningcadence"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.runningcadence"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+
+        buildConfigField "String", "SPOTIFY_CLIENT_ID", "\"${spotifyClientId}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation files("libs/spotify-app-remote-release-0.8.0.aar")
+    implementation "com.google.code.gson:gson:2.11.0"
+    testImplementation "junit:junit:4.13.2"
+}

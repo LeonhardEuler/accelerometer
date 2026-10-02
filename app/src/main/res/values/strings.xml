@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Running Cadence</string>
+    <string name="title">Current cadence</string>
+    <string name="steps_per_minute">steps per minute</string>
+    <string name="start_running">Start running to measure cadence</string>
+    <string name="accelerometer_unavailable">This device has no accelerometer</string>
+    <string name="sensor_start_failed">Could not start the accelerometer. Reopen the app to retry.</string>
+    <string name="stabilizing">Keep a steady pace for 5 seconds (100-240 steps/min)</string>
+    <string name="cadence_stable">Cadence stable</string>
+    <string name="genre_label">Music genre</string>
+    <string name="genre_hint">Genre is approximated using seed songs, not a strict genre filter.</string>
+    <string-array name="genres">
+        <item>Pop</item>
+        <item>Rock</item>
+        <item>Hip-hop</item>
+        <item>Electronic / EDM</item>
+        <item>R&amp;B</item>
+        <item>Country</item>
+        <item>Metal</item>
+        <item>Indie</item>
+    </string-array>
+    <string name="waiting_for_cadence">Music matching starts once your cadence stabilizes.</string>
+    <string name="searching_music">Searching ReccoBeats near %1$d BPM...</string>
+    <string name="cadence_changed">Pace changed or measurement paused. Waiting for steady cadence.</string>
+    <string name="no_matching_music">No verified match within 1 BPM of %1$d. %2$d tracks lacked BPM or a Spotify link. Try another match or genre.</string>
+    <string name="matches_found">%1$d verified matches within 1 BPM. %2$d tracks lacked BPM or a Spotify link.</string>
+    <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Find another match.</string>
+    <string name="rate_limited">ReccoBeats rate limit reached. Wait %1$d seconds before retrying.</string>
+    <string name="waiting_for_search">Another search is queued; waiting for steady cadence and the request cooldown.</string>
+    <string name="retry_countdown">Find another match (search in %1$d s)</string>
+    <string name="next_match">Find another match</string>
+    <string name="song_details">%1$s\n%2$s\n%3$.1f BPM</string>
+    <string name="no_song">No song matched yet</string>
+    <string name="play_match">Play matched song</string>
+    <string name="open_spotify">Open song in Spotify</string>
+    <string name="connect_spotify">Connect Spotify</string>
+    <string name="connecting_spotify">Connecting to Spotify...</string>
+    <string name="spotify_connected">Spotify connected</string>
+    <string name="spotify_ready">Spotify ready. A matching song will play when your cadence is steady.</string>
+    <string name="spotify_connect_hint">Connect and authorize Spotify before running to enable automatic playback.</string>
+    <string name="spotify_setup_required">Automatic playback needs a Spotify client ID. Configure spotifyClientId in Gradle, then rebuild (see README). You can still open matched songs in Spotify.</string>
+    <string name="spotify_not_installed">Install the Spotify app and sign in, then tap Connect Spotify.</string>
+    <string name="starting_spotify_playback">Requesting playback in Spotify...</string>
+    <string name="spotify_playback_accepted">Playback requested in Spotify: %1$s</string>
+    <string name="spotify_playing">Spotify playing: %1$s</string>
+    <string name="spotify_paused">Spotify paused: %1$s</string>
+    <string name="spotify_connection_failed">Spotify connection failed (%1$s). Check the client ID, redirect URI, package fingerprint and Spotify sign-in, then reconnect.</string>
+    <string name="spotify_playback_failed">Spotify playback failed (%1$s). Check your account and track availability, then tap Play matched song.</string>
+    <string name="spotify_cannot_open">No app can open this Spotify link. Install Spotify or a web browser.</string>
+    <string name="music_attribution">Recommendations and BPM: ReccoBeats. Playback: Spotify.\nMeasurement and matching pause when this screen is hidden. Spotify keeps playing.</string>
+</resources>
