@@ -46,8 +46,11 @@ Kotlin or server component.
 
 ## Music matching
 
-- The dropdown offers Pop, Rock, Hip-hop, Electronic / EDM, R&B, Country, Metal,
-  and Indie. The selection is saved on the device.
+- The dropdown offers **Dance / EDM, Uptempo / Hardcore, Drum & Bass, House,
+  Techno, Trance, Hardstyle, Upbeat Pop, and Pop Punk / Rock**.
+  Dance / EDM is the default. The selection is saved by style name, not position;
+  upgrading from the old broad-genre list selects Dance / EDM once without
+  changing Spotify settings.
 - Matching starts after five seconds of smoothed cadence readings between 100
   and 240 SPM with a total spread of at most 6 SPM.
 - ReccoBeats receives a curated genre seed and the target tempo. Its recommendation
@@ -108,21 +111,27 @@ ReccoBeats requires no API key. Only the genre seed, target cadence, popularity
 preference and candidate track IDs are sent; raw accelerometer samples stay on the device. Spotify playback
 requires Spotify authorization separately.
 
-### Genre seeds
+### Running-style seeds
 
-These Spotify track IDs were resolved through ReccoBeats on October 2, 2026.
+These Spotify track IDs and their audio features were verified against ReccoBeats
+on October 3, 2026.
 `Genre.java` contains the IDs; `R.array.genres` uses the same enum order.
 
-| Genre | Seed |
+| Style | Seed |
 | --- | --- |
-| Pop | The Weeknd - Blinding Lights |
-| Rock | Foo Fighters - Everlong |
-| Hip-hop | Eminem - Lose Yourself |
-| Electronic / EDM | Avicii - Levels |
-| R&B | SZA - Kill Bill |
-| Country | Luke Combs - When It Rains It Pours |
-| Metal | Metallica - Master Of Puppets |
-| Indie | Arctic Monkeys - Do I Wanna Know? |
+| Dance / EDM | Avicii - Levels |
+| Uptempo / Hardcore | Dimitri K - Early Uptempo Mash |
+| Drum & Bass | Wilkinson - Afterglow |
+| House | FISHER - Losing It |
+| Techno | Adam Beyer, Bart Skils - Your Mind |
+| Trance | Armin van Buuren - Blah Blah Blah |
+| Hardstyle | Brennan Heart, Wildstylez - Lose My Mind |
+| Upbeat Pop | The Weeknd - Blinding Lights |
+| Pop Punk / Rock | Paramore - Misery Business |
+
+Seeds are style references, not automatically playable recommendations. The
+popularity >=60 rule still applies to every matched song, even when a seed
+itself has a lower score.
 
 ## Enable automatic Spotify playback
 

@@ -135,12 +135,14 @@ public final class MainActivity extends Activity
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         preferences = getPreferences(MODE_PRIVATE);
-        int savedGenre = preferences.getInt("genre", 0);
-        if (savedGenre < 0 || savedGenre >= Genre.values().length) {
-            Log.w(TAG, "Saved genre is invalid; selecting Pop.");
-            savedGenre = 0;
+        String savedGenre = preferences.getString("running_genre", Genre.DANCE_EDM.name());
+        try {
+            genre = Genre.valueOf(savedGenre);
+        } catch (IllegalArgumentException error) {
+            Log.w(TAG, "Saved running style is invalid; selecting Dance / EDM.", error);
+            genre = Genre.DANCE_EDM;
         }
-        genre = Genre.values()[savedGenre];
+        preferences.edit().putString("running_genre", genre.name()).apply();
         spotify = new SpotifyPlayback(this, spotifyClientId(), this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setContentView(createContentView());
@@ -908,7 +910,7 @@ public final class MainActivity extends Activity
                 Genre selected = Genre.values()[position];
                 if (selected != genre) {
                     genre = selected;
-                    preferences.edit().putInt("genre", position).apply();
+                    preferences.edit().putString("running_genre", selected.name()).apply();
                     cancelSearch();
                     cachedCandidates = null;
                     suggestionsCadence = 0;

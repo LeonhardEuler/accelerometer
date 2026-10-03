@@ -23,17 +23,18 @@
     <string name="measurement_hint">Keep the phone snug against your body while running. Cadence needs several regular steps; shaking or tapping the screen is not a reliable measurement.</string>
     <string name="stabilizing">Keep a steady pace for 5 seconds (100-240 steps/min)</string>
     <string name="cadence_stable">Cadence stable</string>
-    <string name="genre_label">Music genre</string>
-    <string name="genre_hint">Genre is approximated using seed songs, not a strict genre filter. Minimum popularity: 60/100.</string>
+    <string name="genre_label">Running music style</string>
+    <string name="genre_hint">Styles use representative seed songs, not a strict genre filter. Minimum popularity: 60/100.</string>
     <string-array name="genres">
-        <item>Pop</item>
-        <item>Rock</item>
-        <item>Hip-hop</item>
-        <item>Electronic / EDM</item>
-        <item>R&amp;B</item>
-        <item>Country</item>
-        <item>Metal</item>
-        <item>Indie</item>
+        <item>Dance / EDM</item>
+        <item>Uptempo / Hardcore</item>
+        <item>Drum &amp; Bass</item>
+        <item>House</item>
+        <item>Techno</item>
+        <item>Trance</item>
+        <item>Hardstyle</item>
+        <item>Upbeat Pop</item>
+        <item>Pop Punk / Rock</item>
     </string-array>
     <string name="waiting_for_cadence">Music matching starts once your cadence stabilizes.</string>
     <string name="searching_music">Searching popular songs near %1$d BPM...</string>

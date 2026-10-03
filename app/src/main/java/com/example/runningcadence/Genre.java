@@ -1,14 +1,15 @@
 package com.example.runningcadence;
 
 public enum Genre {
-    POP("0VjIjW4GlUZAMYd2vXMi3b"),
-    ROCK("5UWwZ5lm5PKu6eKsHAGxOk"),
-    HIP_HOP("1jS7v1W7iS5ND9IYqfOxWo"),
-    ELECTRONIC("0IVMcU1JH2K3hN1N1SEBz3"),
-    R_AND_B("1Qrg8KqiBpW07V7PNxwwwL"),
-    COUNTRY("1mMLMZYXkMueg65jRRWG1l"),
-    METAL("2MuWTIM3b0YEAskbeeFE1i"),
-    INDIE("5FVd6KXrgO9B3JPmC8OPst");
+    DANCE_EDM("0IVMcU1JH2K3hN1N1SEBz3"),
+    UPTEMPO_HARDCORE("3bzay4OfqLDujCzt2SnYQe"),
+    DRUM_AND_BASS("6LW3Z1GqbL78TIjfDyg4zp"),
+    HOUSE("6ho0GyrWZN3mhi9zVRW7xi"),
+    TECHNO("5NZdurYcFYOg3s2YyzeVgE"),
+    TRANCE("0bikBdtMtDpNeTdz6VZvfv"),
+    HARDSTYLE("5ZHdiROs72t0QpMHggDSNW"),
+    UPBEAT_POP("0VjIjW4GlUZAMYd2vXMi3b"),
+    POP_PUNK_ROCK("3l9CW99AHtExIRV4hW2N5m");
 
     public final String seedTrackId;
 
