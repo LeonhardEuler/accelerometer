@@ -40,6 +40,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.spotify.android.appremote.api.SpotifyAppRemote;
+import com.spotify.android.appremote.api.error.AuthenticationFailedException;
+import com.spotify.android.appremote.api.error.NotLoggedInException;
+import com.spotify.android.appremote.api.error.OfflineModeException;
+import com.spotify.android.appremote.api.error.UserNotAuthorizedException;
 import com.spotify.protocol.types.PlayerState;
 
 import java.io.IOException;
@@ -51,6 +55,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
 
 public final class MainActivity extends Activity
         implements SensorEventListener, SpotifyPlayback.Listener {
@@ -143,9 +148,10 @@ public final class MainActivity extends Activity
     protected void onStart() {
         super.onStart();
         foreground = true;
-        if (preferences.getBoolean("spotify_enabled", false) && isSpotifyConfigured()) {
-            connectSpotify(false);
-        }
+        boolean previouslyAuthorized = isSpotifyConfigured()
+                && spotifyClientId().equals(preferences.getString("spotify_authorized_client_id", ""));
+        spotify.onStart(previouslyAuthorized);
+        updateConnectButton();
     }
 
     @Override
@@ -265,13 +271,14 @@ public final class MainActivity extends Activity
     @Override
     protected void onStop() {
         foreground = false;
-        spotify.disconnect();
+        spotify.onStop();
         updateConnectButton();
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
+        spotify.disconnect();
         searchExecutor.shutdownNow();
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
@@ -507,8 +514,6 @@ public final class MainActivity extends Activity
             }
             return;
         }
-        preferences.edit().putBoolean("spotify_enabled", true).apply();
-        spotifyStatus.setText(R.string.connecting_spotify);
         spotify.connect(showAuthorization);
         updateConnectButton();
     }
@@ -521,7 +526,14 @@ public final class MainActivity extends Activity
     }
 
     @Override
+    public void onSpotifyConnecting(boolean authorizing) {
+        spotifyStatus.setText(authorizing ? R.string.authorizing_spotify : R.string.connecting_spotify);
+        updateConnectButton();
+    }
+
+    @Override
     public void onSpotifyConnected() {
+        preferences.edit().putString("spotify_authorized_client_id", spotifyClientId()).apply();
         updateConnectButton();
         spotifyStatus.setText(R.string.spotify_ready);
         if (manualPlayRequested && selectedSong != null) {
@@ -534,15 +546,31 @@ public final class MainActivity extends Activity
     @Override
     public void onSpotifyConnectionFailed(Throwable error) {
         updateConnectButton();
-        Log.e(TAG, "Spotify connection failed.", error);
-        spotifyStatus.setText(getString(R.string.spotify_connection_failed,
-                error.getClass().getSimpleName()));
+        int messageId = R.string.spotify_connection_failed;
+        if (error instanceof TimeoutException) {
+            messageId = R.string.spotify_connection_timed_out;
+        } else if (error instanceof AuthenticationFailedException) {
+            messageId = R.string.spotify_authentication_rejected;
+        } else if (error instanceof UserNotAuthorizedException) {
+            messageId = R.string.spotify_authorization_needed;
+            preferences.edit().remove("spotify_authorized_client_id").apply();
+        } else if (error instanceof NotLoggedInException) {
+            messageId = R.string.spotify_sign_in_needed;
+        } else if (error instanceof OfflineModeException) {
+            messageId = R.string.spotify_offline;
+        }
+        String message = getString(messageId, error.getClass().getSimpleName())
+                + "\n\n" + spotify.getConnectionDetails();
+        Log.e(TAG, "Spotify connection failed: " + error.getClass().getSimpleName()
+                + "; " + spotify.getConnectionDetails());
+        spotifyStatus.setText(message);
         if (foreground && interactiveSpotifyConnection) {
             new AlertDialog.Builder(this)
                     .setTitle(R.string.spotify_connection_problem)
-                    .setMessage(getString(R.string.spotify_connection_failed,
-                            error.getClass().getSimpleName()))
-                    .setPositiveButton(R.string.spotify_setup, (dialog, which) -> showSpotifySetup())
+                    .setMessage(message)
+                    .setPositiveButton(R.string.retry_spotify, (dialog, which) -> connectSpotify(true))
+                    .setNeutralButton(R.string.copy_error_details, (dialog, which) ->
+                            copyDetails(getString(R.string.spotify_connection_problem), message))
                     .setNegativeButton(android.R.string.ok, null)
                     .show();
         }
@@ -607,16 +635,8 @@ public final class MainActivity extends Activity
         registration.setGravity(Gravity.START);
         registration.setTextIsSelectable(true);
         content.addView(registration);
-        content.addView(createButton(R.string.copy_spotify_details, view -> {
-            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
-            if (clipboard == null) {
-                Log.e(TAG, "Clipboard service unavailable.");
-                Toast.makeText(this, R.string.clipboard_unavailable, Toast.LENGTH_LONG).show();
-                return;
-            }
-            clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.spotify_setup), details));
-            Toast.makeText(this, R.string.spotify_details_copied, Toast.LENGTH_SHORT).show();
-        }));
+        content.addView(createButton(R.string.copy_spotify_details,
+                view -> copyDetails(getString(R.string.spotify_setup), details)));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -637,11 +657,23 @@ public final class MainActivity extends Activity
                     preferences.edit().putString("spotify_client_id", value).apply();
                     spotify.disconnect();
                     spotify = new SpotifyPlayback(this, value, this);
+                    spotify.onStart(false);
                     updateConnectButton();
                     dialog.dismiss();
                     connectSpotify(true);
                 }));
         dialog.show();
+    }
+
+    private void copyDetails(String label, String details) {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        if (clipboard == null) {
+            Log.e(TAG, "Clipboard service unavailable.");
+            Toast.makeText(this, R.string.clipboard_unavailable, Toast.LENGTH_LONG).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, details));
+        Toast.makeText(this, R.string.spotify_details_copied, Toast.LENGTH_SHORT).show();
     }
 
     private String signingFingerprint() {

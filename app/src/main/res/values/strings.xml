@@ -49,6 +49,7 @@
     <string name="open_spotify">Open song in Spotify</string>
     <string name="connect_spotify">Connect Spotify</string>
     <string name="connecting_spotify">Connecting to Spotify...</string>
+    <string name="authorizing_spotify">Waiting for Spotify approval. Approve access in Spotify, then return here. This can take up to 60 seconds.</string>
     <string name="spotify_connected">Spotify connected</string>
     <string name="spotify_ready">Spotify ready. A matching song will play when your cadence is steady.</string>
     <string name="spotify_connect_hint">Connect and authorize Spotify before running to enable automatic playback.</string>
@@ -60,7 +61,7 @@
     <string name="spotify_client_id_invalid">Enter the 32-character hexadecimal Client ID from your Spotify app dashboard.</string>
     <string name="spotify_registration_details">Package: %1$s\nRedirect URI: %2$s\nSigning SHA-1:\n%3$s</string>
     <string name="copy_spotify_details">Copy registration details</string>
-    <string name="spotify_details_copied">Registration details copied</string>
+    <string name="spotify_details_copied">Details copied</string>
     <string name="clipboard_unavailable">Could not access the clipboard. Select and copy the details manually.</string>
     <string name="save_and_connect">Save and connect</string>
     <string name="spotify_dashboard">Dashboard</string>
@@ -73,7 +74,14 @@
     <string name="spotify_playback_accepted">Playback requested in Spotify: %1$s</string>
     <string name="spotify_playing">Spotify playing: %1$s</string>
     <string name="spotify_paused">Spotify paused: %1$s</string>
-    <string name="spotify_connection_failed">Spotify connection failed (%1$s). Check the client ID, redirect URI, package fingerprint and Spotify sign-in, then reconnect.</string>
+    <string name="spotify_connection_failed">Spotify connection failed (%1$s). Open Spotify, confirm it is signed in and online, then retry. Copy the details below if it still fails.</string>
+    <string name="spotify_connection_timed_out">Spotify did not complete the connection (%1$s). No credential rejection was received. Open Spotify, confirm it is signed in and online, return here, then retry.</string>
+    <string name="spotify_authentication_rejected">Spotify rejected this app\'s registration (%1$s). Check that the installed app\'s package, signing SHA-1 and redirect URI match the same Client ID in the dashboard.</string>
+    <string name="spotify_authorization_needed">Spotify has not authorized this app (%1$s). Tap Connect Spotify and approve access.</string>
+    <string name="spotify_sign_in_needed">Spotify is not signed in (%1$s). Sign in inside the Spotify app, return here and retry.</string>
+    <string name="spotify_offline">Spotify is in offline mode (%1$s). Disable offline mode in Spotify, then retry.</string>
+    <string name="retry_spotify">Retry connection</string>
+    <string name="copy_error_details">Copy details</string>
     <string name="spotify_playback_failed">Spotify playback failed (%1$s). Check your account and track availability, then tap Play matched song.</string>
     <string name="spotify_cannot_open">No app can open this Spotify link. Install Spotify or a web browser.</string>
     <string name="music_attribution">Recommendations and BPM: ReccoBeats. Playback: Spotify.\nMeasurement and matching pause when this screen is hidden. Spotify keeps playing.</string>

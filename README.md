@@ -105,8 +105,28 @@ in, and authorized; track/account/region restrictions still apply.
 
 If no client ID is configured, the connection button opens setup instead of
 silently repeating a status message. Missing Spotify installations and connection
-failures produce actionable dialogs, and a stalled connection times out after
-20 seconds rather than leaving the button disabled indefinitely.
+failures produce actionable dialogs. Interactive authorization has a 60-second
+deadline; reconnecting an already authorized app has a 20-second deadline.
+
+The bundled App Remote 0.8.0 SDK binds Spotify using flags that predate Android
+14's background activity launch rules. `SpotifyServiceContext` adds
+`BIND_ALLOW_ACTIVITY_STARTS` on Android 14+ **only for an explicit authorization
+request to Spotify's protocol service**. It preserves the scoped context when the
+SDK asks for the application context. This lets Spotify open its approval screen
+on Android 14-16 without lowering the target SDK or requesting overlay permissions.
+
+A pending authorization request survives the temporary switch to Spotify's
+approval screen. A completed connection is still disconnected while this app is
+hidden, and reconnects when you return. Timed-out, cancelled and destroyed
+connections release their service bindings, including requests that never
+returned an App Remote instance.
+
+Silent reconnection is enabled only after a connection has actually succeeded
+for the configured Client ID. Merely tapping Connect does not enable it.
+Connection errors distinguish timeouts from explicit registration/authorization
+rejections. **Copy details** provides the Android version, connection mode,
+whether service binding was accepted, elapsed time and error type; it does not
+include credentials or tokens.
 
 For development, a build-time default can still be set with
 `spotifyClientId=YOUR_32_CHARACTER_CLIENT_ID` in personal
@@ -153,6 +173,8 @@ does not update an already installed copy.
 - Spotify App Remote setup: https://developer.spotify.com/documentation/android/tutorials/getting-started
 - Spotify Android SDK release: https://github.com/spotify/android-sdk/releases/tag/v0.8.0-appremote_v2.1.0-auth
 - Android motion sensors: https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion
+- Android 14 activity launch changes: https://developer.android.com/about/versions/14/behavior-changes-14
+- Spotify SDK Android 14 connection report: https://github.com/spotify/android-sdk/issues/361
 
 ReccoBeats supplies its service as-is without availability or accuracy guarantees.
 Review its terms and Spotify's platform terms before distributing an integration.
