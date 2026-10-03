@@ -26,6 +26,8 @@ public final class SpotifyPlayback {
         void onSpotifyConnected();
         void onSpotifyConnectionFailed(Throwable error);
         void onPlaybackAccepted(Song song);
+        void onPlaybackPaused();
+        void onPlaybackPauseFailed(Throwable error);
         void onPlaybackFailed(Throwable error);
         void onPlayerState(PlayerState state);
     }
@@ -159,12 +161,20 @@ public final class SpotifyPlayback {
     }
 
     public void play(Song song) {
+        startPlayback(song, false);
+    }
+
+    public void resume(Song song) {
+        startPlayback(song, true);
+    }
+
+    private void startPlayback(Song song, boolean resume) {
         if (!isConnected()) {
             listener.onPlaybackFailed(new IllegalStateException("Spotify is not connected."));
             return;
         }
         int version = ++playVersion;
-        remote.getPlayerApi().play(song.spotifyUri())
+        (resume ? remote.getPlayerApi().resume() : remote.getPlayerApi().play(song.spotifyUri()))
                 .setResultCallback(result -> {
                     if (version == playVersion) {
                         listener.onPlaybackAccepted(song);
@@ -173,6 +183,25 @@ public final class SpotifyPlayback {
                 .setErrorCallback(error -> {
                     if (version == playVersion) {
                         listener.onPlaybackFailed(error);
+                    }
+                });
+    }
+
+    public void pause() {
+        if (!isConnected()) {
+            listener.onPlaybackPauseFailed(new IllegalStateException("Spotify is not connected."));
+            return;
+        }
+        int version = ++playVersion;
+        remote.getPlayerApi().pause()
+                .setResultCallback(result -> {
+                    if (version == playVersion) {
+                        listener.onPlaybackPaused();
+                    }
+                })
+                .setErrorCallback(error -> {
+                    if (version == playVersion) {
+                        listener.onPlaybackPauseFailed(error);
                     }
                 });
     }

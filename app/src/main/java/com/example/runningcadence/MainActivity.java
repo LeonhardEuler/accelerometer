@@ -100,18 +100,26 @@ public final class MainActivity extends Activity
     private SpotifyPlayback spotify;
     private Genre genre;
     private Song selectedSong;
+    private Song managedSong;
+    private ReccoBeatsClient.Result cachedCandidates;
     private String lastPlayedId;
     private String lastAutoAttemptId;
+    private String spotifyTrackUri;
     private Future<?> searchTask;
     private int requestVersion;
-    private int requestedCadence;
+    private int suggestionsCadence;
     private int currentCadence;
     private int stableCadence;
     private boolean foreground;
     private boolean sensing;
     private boolean usingSystemSteps;
     private boolean searching;
+    private boolean manualSearchRequested;
     private boolean manualPlayRequested;
+    private boolean playPending;
+    private boolean pausePending;
+    private boolean pausedForCadence;
+    private boolean pauseAttemptedForStop;
     private boolean interactiveSpotifyConnection;
     private long sensorStartedMs;
     private long lastSensorCallbackMs = -1;
@@ -148,6 +156,7 @@ public final class MainActivity extends Activity
     protected void onStart() {
         super.onStart();
         foreground = true;
+        spotifyTrackUri = null;
         boolean previouslyAuthorized = isSpotifyConfigured()
                 && spotifyClientId().equals(preferences.getString("spotify_authorized_client_id", ""));
         spotify.onStart(previouslyAuthorized);
@@ -272,6 +281,9 @@ public final class MainActivity extends Activity
     protected void onStop() {
         foreground = false;
         spotify.onStop();
+        playPending = false;
+        pausePending = false;
+        pauseAttemptedForStop = false;
         updateConnectButton();
         super.onStop();
     }
@@ -333,14 +345,23 @@ public final class MainActivity extends Activity
         sensorStatus.setText(getString(R.string.sensor_diagnostics,
                 freshSensor ? sensorRate : 0, detectedSteps, detector.getFilteredAcceleration()));
 
-        if (searching && (currentCadence == 0
-                || Math.abs(currentCadence - requestedCadence) > MusicSearchGate.CADENCE_CHANGE)) {
+        pauseIfStopped();
+        if (searching && currentCadence == 0) {
             cancelSearch();
         }
-        if (!searching && searchGate.shouldSearch(genre, stableCadence, now)) {
-            searchMusic(now);
+        if (stableCadence > 0 && !searching) {
+            refreshSuggestions();
+            if ((!selectedSongMatches() || manualSearchRequested) && selectNextMatch()) {
+                showCachedMatchStatus();
+            }
+            if ((!selectedSongMatches() || manualSearchRequested)
+                    && searchGate.shouldSearch(genre, currentCadence, now)) {
+                searchMusic(now);
+            }
         }
         maybeAutoPlay();
+        playButton.setEnabled(selectedSongMatches() && currentCadence > 0
+                && !playPending && !pausePending);
         long delay = searchGate.remainingDelayMs(now);
         nextButton.setEnabled(stableCadence > 0 && !searching);
         nextButton.setText(delay > 0 && suggestions.isEmpty()
@@ -350,18 +371,17 @@ public final class MainActivity extends Activity
 
     private void searchMusic(long now) {
         searching = true;
-        requestedCadence = stableCadence;
-        searchGate.started(genre, stableCadence, now);
+        searchGate.started(genre, currentCadence, now);
         int version = ++requestVersion;
-        int target = stableCadence;
+        int target = currentCadence;
         Genre requestedGenre = genre;
-        String excludedId = lastPlayedId;
+        boolean replaceExisting = manualSearchRequested;
+        manualSearchRequested = false;
         musicStatus.setText(getString(R.string.searching_music, target));
         searchTask = searchExecutor.submit(() -> {
             try {
-                ReccoBeatsClient.Result result = reccoBeats.findMatches(
-                        requestedGenre, target, excludedId);
-                handler.post(() -> finishSearch(version, requestedGenre, target, result));
+                ReccoBeatsClient.Result result = reccoBeats.findCandidates(requestedGenre, target);
+                handler.post(() -> finishSearch(version, requestedGenre, result, replaceExisting));
             } catch (IOException error) {
                 handler.post(() -> failSearch(version, error));
             }
@@ -372,32 +392,33 @@ public final class MainActivity extends Activity
         return version == requestVersion && foreground && sensing;
     }
 
-    private void finishSearch(int version, Genre requestedGenre, int target,
-            ReccoBeatsClient.Result result) {
+    private void finishSearch(int version, Genre requestedGenre,
+            ReccoBeatsClient.Result result, boolean replaceExisting) {
         if (!isCurrentRequest(version)) {
             return;
         }
         searching = false;
         searchTask = null;
-        if (genre != requestedGenre || stableCadence == 0
-                || Math.abs(currentCadence - target) > ReccoBeatsClient.BPM_TOLERANCE) {
-            musicStatus.setText(R.string.cadence_changed);
-            searchGate.requestAnother();
+        if (genre != requestedGenre) {
             return;
         }
+        cachedCandidates = result;
+        suggestionsCadence = 0;
         suggestions.clear();
-        suggestions.addAll(result.songs);
         if (result.unavailableTracks > 0) {
             Log.i(TAG, result.unavailableTracks + " recommendations lacked BPM or a Spotify link.");
         }
-        if (!selectNextMatch()) {
-            clearSong();
-            musicStatus.setText(getString(R.string.no_matching_music,
-                    target, result.unavailableTracks));
-        } else {
-            musicStatus.setText(getString(R.string.matches_found,
-                    suggestions.size() + 1, result.unavailableTracks));
+        if (stableCadence == 0) {
+            manualSearchRequested = replaceExisting;
+            musicStatus.setText(getString(R.string.cached_waiting_cadence, result.candidates.size()));
+            return;
         }
+        refreshSuggestions();
+        if ((replaceExisting || !selectedSongMatches()) && !selectNextMatch()
+                && !selectedSongMatches()) {
+            clearSong();
+        }
+        showCachedMatchStatus();
     }
 
     private void failSearch(int version, IOException error) {
@@ -418,6 +439,7 @@ public final class MainActivity extends Activity
     }
 
     private void cancelSearch() {
+        manualSearchRequested = false;
         if (!searching) {
             return;
         }
@@ -432,14 +454,51 @@ public final class MainActivity extends Activity
         musicStatus.setText(R.string.cadence_changed);
     }
 
+    private void refreshSuggestions() {
+        if (cachedCandidates == null || stableCadence == 0
+                || suggestionsCadence == currentCadence) {
+            return;
+        }
+        suggestions.clear();
+        suggestions.addAll(cachedCandidates.matchesFor(currentCadence,
+                selectedSong == null ? null : selectedSong.spotifyId));
+        suggestionsCadence = currentCadence;
+        showCachedMatchStatus();
+    }
+
+    private boolean selectedSongMatches() {
+        return selectedSong != null
+                && Math.abs(selectedSong.bpm - currentCadence) <= ReccoBeatsClient.BPM_TOLERANCE;
+    }
+
+    private void showCachedMatchStatus() {
+        if (cachedCandidates == null || stableCadence == 0) {
+            return;
+        }
+        int matches = cachedCandidates.matchesFor(currentCadence, null).size();
+        if (matches == 0) {
+            musicStatus.setText(getString(R.string.no_matching_music, currentCadence,
+                    cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
+                    cachedCandidates.unavailableTracks));
+        } else {
+            musicStatus.setText(getString(R.string.matches_found, currentCadence, matches,
+                    cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
+                    cachedCandidates.unavailableTracks));
+        }
+    }
+
     private boolean selectNextMatch() {
+        if (stableCadence == 0) {
+            return false;
+        }
         while (!suggestions.isEmpty()) {
             Song song = suggestions.removeFirst();
-            if (Math.abs(song.bpm - stableCadence) > ReccoBeatsClient.BPM_TOLERANCE
+            if ((selectedSong != null && song.spotifyId.equals(selectedSong.spotifyId))
                     || Math.abs(song.bpm - currentCadence) > ReccoBeatsClient.BPM_TOLERANCE) {
                 continue;
             }
             selectedSong = song;
+            manualSearchRequested = false;
             lastAutoAttemptId = null;
             songText.setText(getString(R.string.song_details, song.title, song.artist, song.bpm));
             playButton.setEnabled(true);
@@ -459,18 +518,44 @@ public final class MainActivity extends Activity
     }
 
     private void maybeAutoPlay() {
-        if (foreground && sensing && stableCadence > 0 && selectedSong != null
+        if (foreground && sensing && stableCadence > 0 && selectedSongMatches()
                 && spotify.isConnected()
-                && !selectedSong.spotifyId.equals(lastPlayedId)
-                && !selectedSong.spotifyId.equals(lastAutoAttemptId)
-                && Math.abs(selectedSong.bpm - stableCadence) <= ReccoBeatsClient.BPM_TOLERANCE
-                && Math.abs(selectedSong.bpm - currentCadence) <= ReccoBeatsClient.BPM_TOLERANCE) {
+                && !playPending && !pausePending
+                && (!pausedForCadence || spotifyTrackUri != null)
+                && (pausedForCadence || !selectedSong.spotifyId.equals(lastPlayedId))
+                && !selectedSong.spotifyId.equals(lastAutoAttemptId)) {
             playSelectedSong();
         }
     }
 
+    private void pauseIfStopped() {
+        if (currentCadence > 0) {
+            pauseAttemptedForStop = false;
+            return;
+        }
+        boolean ownsCurrentPlayback = managedSong != null
+                && (playPending || managedSong.spotifyUri().equals(spotifyTrackUri));
+        if (!foreground || !spotify.isConnected() || !ownsCurrentPlayback
+                || (pausedForCadence && !playPending) || pausePending || pauseAttemptedForStop) {
+            return;
+        }
+        pauseAttemptedForStop = true;
+        pausePending = true;
+        playPending = false;
+        spotifyStatus.setText(R.string.pausing_for_cadence);
+        spotify.pause();
+    }
+
     private void playSelectedSong() {
         if (selectedSong == null) {
+            return;
+        }
+        if (currentCadence == 0 || !selectedSongMatches()) {
+            manualPlayRequested = false;
+            spotifyStatus.setText(R.string.playback_waiting_for_cadence);
+            return;
+        }
+        if (playPending || pausePending) {
             return;
         }
         if (!spotify.isConnected()) {
@@ -480,8 +565,14 @@ public final class MainActivity extends Activity
         }
         manualPlayRequested = false;
         lastAutoAttemptId = selectedSong.spotifyId;
+        managedSong = selectedSong;
+        playPending = true;
         spotifyStatus.setText(R.string.starting_spotify_playback);
-        spotify.play(selectedSong);
+        if (pausedForCadence && selectedSong.spotifyUri().equals(spotifyTrackUri)) {
+            spotify.resume(selectedSong);
+        } else {
+            spotify.play(selectedSong);
+        }
     }
 
     private boolean isSpotifyConfigured() {
@@ -533,6 +624,7 @@ public final class MainActivity extends Activity
 
     @Override
     public void onSpotifyConnected() {
+        pauseAttemptedForStop = false;
         preferences.edit().putString("spotify_authorized_client_id", spotifyClientId()).apply();
         updateConnectButton();
         spotifyStatus.setText(R.string.spotify_ready);
@@ -541,10 +633,13 @@ public final class MainActivity extends Activity
         } else {
             maybeAutoPlay();
         }
+        pauseIfStopped();
     }
 
     @Override
     public void onSpotifyConnectionFailed(Throwable error) {
+        playPending = false;
+        pausePending = false;
         updateConnectButton();
         int messageId = R.string.spotify_connection_failed;
         if (error instanceof TimeoutException) {
@@ -578,12 +673,34 @@ public final class MainActivity extends Activity
 
     @Override
     public void onPlaybackAccepted(Song song) {
+        playPending = false;
+        pausedForCadence = false;
+        managedSong = song;
+        spotifyTrackUri = song.spotifyUri();
         lastPlayedId = song.spotifyId;
         spotifyStatus.setText(getString(R.string.spotify_playback_accepted, song.title));
+        pauseIfStopped();
+    }
+
+    @Override
+    public void onPlaybackPaused() {
+        pausePending = false;
+        pausedForCadence = true;
+        lastAutoAttemptId = null;
+        spotifyStatus.setText(R.string.paused_for_cadence);
+    }
+
+    @Override
+    public void onPlaybackPauseFailed(Throwable error) {
+        pausePending = false;
+        Log.e(TAG, "Spotify pause failed.", error);
+        spotifyStatus.setText(getString(R.string.spotify_pause_failed, error.getClass().getSimpleName()));
+        updateConnectButton();
     }
 
     @Override
     public void onPlaybackFailed(Throwable error) {
+        playPending = false;
         Log.e(TAG, "Spotify playback failed.", error);
         spotifyStatus.setText(getString(R.string.spotify_playback_failed,
                 error.getClass().getSimpleName()));
@@ -591,10 +708,20 @@ public final class MainActivity extends Activity
 
     @Override
     public void onPlayerState(PlayerState state) {
+        spotifyTrackUri = state.track == null ? null : state.track.uri;
+        if (managedSong != null && !managedSong.spotifyUri().equals(spotifyTrackUri)
+                && !playPending && !pausePending) {
+            pausedForCadence = false;
+        } else if (managedSong != null && state.track != null && !state.isPaused
+                && pausedForCadence && !playPending && !pausePending) {
+            pausedForCadence = false;
+            pauseAttemptedForStop = false;
+        }
         if (state.track != null) {
             spotifyStatus.setText(getString(state.isPaused
                     ? R.string.spotify_paused : R.string.spotify_playing, state.track.name));
         }
+        pauseIfStopped();
     }
 
     private void openInSpotify() {
@@ -759,6 +886,8 @@ public final class MainActivity extends Activity
                     genre = selected;
                     preferences.edit().putInt("genre", position).apply();
                     cancelSearch();
+                    cachedCandidates = null;
+                    suggestionsCadence = 0;
                     suggestions.clear();
                     clearSong();
                     stability.reset();
@@ -789,9 +918,13 @@ public final class MainActivity extends Activity
         playButton.setEnabled(false);
         layout.addView(playButton);
         nextButton = createButton(R.string.next_match, view -> {
+            refreshSuggestions();
             if (!selectNextMatch()) {
+                manualSearchRequested = true;
                 searchGate.requestAnother();
                 musicStatus.setText(R.string.waiting_for_search);
+            } else {
+                showCachedMatchStatus();
             }
         });
         nextButton.setEnabled(false);

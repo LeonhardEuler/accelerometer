@@ -36,8 +36,9 @@
     <string name="waiting_for_cadence">Music matching starts once your cadence stabilizes.</string>
     <string name="searching_music">Searching ReccoBeats near %1$d BPM...</string>
     <string name="cadence_changed">Pace changed or measurement paused. Waiting for steady cadence.</string>
-    <string name="no_matching_music">No verified match within 1 BPM of %1$d. %2$d tracks lacked BPM or a Spotify link. Try another match or genre.</string>
-    <string name="matches_found">%1$d verified matches within 1 BPM. %2$d tracks lacked BPM or a Spotify link.</string>
+    <string name="no_matching_music">No cached song within 2 BPM of %1$d. Verified %2$d of %3$d recommendations; unavailable: %4$d. Try another match or genre.</string>
+    <string name="matches_found">Cadence %1$d: %2$d matches within 2 BPM. Verified %3$d of %4$d recommendations; unavailable: %5$d.</string>
+    <string name="cached_waiting_cadence">Cached %1$d verified songs. Waiting for steady cadence to choose a match.</string>
     <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Find another match.</string>
     <string name="rate_limited">ReccoBeats rate limit reached. Wait %1$d seconds before retrying.</string>
     <string name="waiting_for_search">Another search is queued; waiting for steady cadence and the request cooldown.</string>
@@ -71,6 +72,10 @@
     <string name="install_spotify">Install Spotify</string>
     <string name="spotify_not_installed">Install the Spotify app and sign in, then tap Connect Spotify.</string>
     <string name="starting_spotify_playback">Requesting playback in Spotify...</string>
+    <string name="pausing_for_cadence">Cadence is 0. Pausing Spotify...</string>
+    <string name="paused_for_cadence">Spotify paused because cadence is 0. Playback resumes automatically at a steady matching pace.</string>
+    <string name="playback_waiting_for_cadence">Start running before playback. The song must be within 2 BPM of your current cadence.</string>
+    <string name="spotify_pause_failed">Could not pause Spotify (%1$s). Pause it in Spotify or reconnect.</string>
     <string name="spotify_playback_accepted">Playback requested in Spotify: %1$s</string>
     <string name="spotify_playing">Spotify playing: %1$s</string>
     <string name="spotify_paused">Spotify paused: %1$s</string>
@@ -84,5 +89,5 @@
     <string name="copy_error_details">Copy details</string>
     <string name="spotify_playback_failed">Spotify playback failed (%1$s). Check your account and track availability, then tap Play matched song.</string>
     <string name="spotify_cannot_open">No app can open this Spotify link. Install Spotify or a web browser.</string>
-    <string name="music_attribution">Recommendations and BPM: ReccoBeats. Playback: Spotify.\nMeasurement and matching pause when this screen is hidden. Spotify keeps playing.</string>
+    <string name="music_attribution">Recommendations and BPM: ReccoBeats. Playback: Spotify.\nPlayback pauses at 0 SPM while this screen is active. Measurement and matching pause when this screen is hidden.</string>
 </resources>

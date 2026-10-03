@@ -21,8 +21,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class ReccoBeatsClient {
-    public static final double BPM_TOLERANCE = 1.0;
-    private static final int CANDIDATE_LIMIT = 40;
+    public static final double BPM_TOLERANCE = 2.0;
+    private static final int CANDIDATE_LIMIT = 100;
+    private static final int FEATURE_BATCH_SIZE = 40;
     private static final String BASE_URL = "https://api.reccobeats.com";
     private static final Pattern SPOTIFY_TRACK = Pattern.compile(
             "https://open\\.spotify\\.com/(?:intl-[a-z-]+/)?track/([A-Za-z0-9]{22})(?:\\?[^#]*)?");
@@ -37,8 +38,7 @@ public final class ReccoBeatsClient {
         this.transport = transport;
     }
 
-    public Result findMatches(Genre genre, int cadence, String excludedSpotifyId)
-            throws IOException {
+    public Result findCandidates(Genre genre, int cadence) throws IOException {
         if (genre == null || cadence < CadenceStabilityTracker.MIN_CADENCE
                 || cadence > CadenceStabilityTracker.MAX_CADENCE) {
             throw new IllegalArgumentException("A genre and running cadence of 100-240 are required.");
@@ -62,9 +62,6 @@ public final class ReccoBeatsClient {
                 unavailable++;
                 continue;
             }
-            if (spotifyId.equals(excludedSpotifyId)) {
-                continue;
-            }
             JsonElement artists = track.get("artists");
             if (artists == null || !artists.isJsonArray()) {
                 throw new IOException("ReccoBeats returned a track without an artists array.");
@@ -76,26 +73,31 @@ public final class ReccoBeatsClient {
             candidates.put(id, new Candidate(title, join(names, ", "), spotifyId));
         }
         if (candidates.isEmpty()) {
-            return new Result(Collections.emptyList(), unavailable);
+            return new Result(Collections.emptyList(), recommendations.size(), unavailable);
         }
 
-        checkCancelled();
-        String ids = URLEncoder.encode(join(candidates.keySet(), ","), "UTF-8");
-        JsonArray features = content(transport.get(BASE_URL + "/v1/audio-features?ids=" + ids));
         Map<String, Double> tempos = new HashMap<>();
-        for (JsonElement element : features) {
-            JsonObject feature = object(element);
-            String id = requiredText(feature, "id");
-            JsonElement tempo = feature.get("tempo");
-            if (tempo == null || tempo.isJsonNull()) {
-                continue;
-            }
-            if (!tempo.isJsonPrimitive() || !tempo.getAsJsonPrimitive().isNumber()) {
-                throw new IOException("ReccoBeats returned a non-numeric tempo.");
-            }
-            double bpm = tempo.getAsDouble();
-            if (!Double.isNaN(bpm) && !Double.isInfinite(bpm) && bpm > 0) {
-                tempos.put(id, bpm);
+        List<String> candidateIds = new ArrayList<>(candidates.keySet());
+        for (int offset = 0; offset < candidateIds.size(); offset += FEATURE_BATCH_SIZE) {
+            checkCancelled();
+            List<String> batch = candidateIds.subList(offset,
+                    Math.min(offset + FEATURE_BATCH_SIZE, candidateIds.size()));
+            String ids = URLEncoder.encode(join(batch, ","), "UTF-8");
+            JsonArray features = content(transport.get(BASE_URL + "/v1/audio-features?ids=" + ids));
+            for (JsonElement element : features) {
+                JsonObject feature = object(element);
+                String id = requiredText(feature, "id");
+                JsonElement tempo = feature.get("tempo");
+                if (tempo == null || tempo.isJsonNull()) {
+                    continue;
+                }
+                if (!tempo.isJsonPrimitive() || !tempo.getAsJsonPrimitive().isNumber()) {
+                    throw new IOException("ReccoBeats returned a non-numeric tempo.");
+                }
+                double bpm = tempo.getAsDouble();
+                if (!Double.isNaN(bpm) && !Double.isInfinite(bpm) && bpm > 0) {
+                    tempos.put(id, bpm);
+                }
             }
         }
 
@@ -109,14 +111,11 @@ public final class ReccoBeatsClient {
                 continue;
             }
             Candidate track = entry.getValue();
-            if (Math.abs(bpm - cadence) <= BPM_TOLERANCE
-                    && seenSpotifyIds.add(track.spotifyId)) {
+            if (seenSpotifyIds.add(track.spotifyId)) {
                 songs.add(new Song(track.title, track.artist, track.spotifyId, bpm));
             }
         }
-        Collections.sort(songs, (first, second) -> Double.compare(
-                Math.abs(first.bpm - cadence), Math.abs(second.bpm - cadence)));
-        return new Result(Collections.unmodifiableList(songs), unavailable);
+        return new Result(Collections.unmodifiableList(songs), recommendations.size(), unavailable);
     }
 
     private static String join(Iterable<String> values, String separator) {
@@ -184,12 +183,31 @@ public final class ReccoBeatsClient {
     }
 
     public static final class Result {
-        public final List<Song> songs;
+        public final List<Song> candidates;
+        public final int returnedTracks;
         public final int unavailableTracks;
 
-        Result(List<Song> songs, int unavailableTracks) {
-            this.songs = songs;
+        Result(List<Song> candidates, int returnedTracks, int unavailableTracks) {
+            this.candidates = candidates;
+            this.returnedTracks = returnedTracks;
             this.unavailableTracks = unavailableTracks;
+        }
+
+        public List<Song> matchesFor(int cadence, String excludedSpotifyId) {
+            if (cadence < CadenceStabilityTracker.MIN_CADENCE
+                    || cadence > CadenceStabilityTracker.MAX_CADENCE) {
+                throw new IllegalArgumentException("Running cadence must be 100-240.");
+            }
+            List<Song> matches = new ArrayList<>();
+            for (Song song : candidates) {
+                if (!song.spotifyId.equals(excludedSpotifyId)
+                        && Math.abs(song.bpm - cadence) <= BPM_TOLERANCE) {
+                    matches.add(song);
+                }
+            }
+            Collections.sort(matches, (first, second) -> Double.compare(
+                    Math.abs(first.bpm - cadence), Math.abs(second.bpm - cadence)));
+            return Collections.unmodifiableList(matches);
         }
     }
 

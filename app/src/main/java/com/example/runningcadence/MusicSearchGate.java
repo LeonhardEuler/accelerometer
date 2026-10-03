@@ -2,7 +2,6 @@ package com.example.runningcadence;
 
 public final class MusicSearchGate {
     public static final long COOLDOWN_MS = 30_000;
-    public static final int CADENCE_CHANGE = 10;
 
     private Genre lastGenre;
     private int lastCadence;
@@ -14,7 +13,7 @@ public final class MusicSearchGate {
                 && stableCadence <= CadenceStabilityTracker.MAX_CADENCE
                 && nowMs >= notBeforeMs
                 && (requested || genre != lastGenre
-                || Math.abs(stableCadence - lastCadence) >= CADENCE_CHANGE);
+                || stableCadence != lastCadence);
     }
 
     public void started(Genre genre, int cadence, long nowMs) {

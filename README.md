@@ -48,21 +48,47 @@ Kotlin or server component.
 - ReccoBeats receives a curated genre seed and the target tempo. Its recommendation
   endpoint has **no genre filter**: genre matching is approximate, not guaranteed.
   Seed similarity may be weak when the tempo target differs substantially.
-- The app fetches up to 40 recommendations, then separately looks up their audio
-  features and joins them by ReccoBeats track ID. Only verified tempos within
-  **1 BPM of the cadence** are eligible; the closest is selected first.
-  It does not silently accept half-time/double-time or out-of-range matches.
-- Recommendations have a minimum 30-second search cooldown. A new search is
-  triggered by a genre change, a sustained cadence change of at least 10 SPM,
-  or **Find another match**. That button first uses remaining cached matches.
-  It does not bypass cooldowns or server `Retry-After` delays.
+- The app fetches up to **100 recommendations**, then looks up their audio
+  features in batches of at most **40 IDs**, joining by ReccoBeats track ID.
+  ReccoBeats' tempo parameter is a recommendation preference, not a hard filter.
+- All verified candidates are retained in memory for the current genre, even if
+  they do not match the original request's cadence. Once cadence is stable,
+  eligibility uses **2 BPM of the currently displayed cadence**, not both that
+  value and an older average. The closest eligible song is selected first.
+  Half-time/double-time or out-of-range matches are not silently accepted.
+- Changing cadence re-filters the cache without a network request. Results
+  arriving during a cadence change are retained rather than discarded. A genre
+  change clears the cache. This improves coverage but cannot guarantee a match
+  at every BPM.
+- A new search is considered when the current song and cached alternatives do
+  not match a new stable cadence, when the genre changes, or when explicitly
+  requested with **Find another match** after cached alternatives are exhausted.
+  Searches retain a 30-second cooldown and honor server `Retry-After` delays.
+  An unchanged cadence does not repeatedly retry a failed or empty lookup.
 - Missing BPM, missing Spotify links, no matches, network errors and rate limits
   are surfaced on screen. Errors do not start an automatic retry loop.
 - Sensor collection and matching run only while this screen is in the foreground.
   Leaving it cancels pending searches and disconnects App Remote; Spotify handles
-  its own background playback. Returning to the same activity does not restart an
-  already requested song.
-  This is not a background running tracker or an automatically maintained playlist.
+  its own background playback. This is not a background running tracker or an
+  automatically maintained playlist.
+
+## Automatic playback and stopping
+
+After Spotify has been connected and authorized, a matching song starts
+automatically at a steady cadence. When the measured cadence becomes **0**,
+the app immediately requests a Spotify **pause** for the music it started.
+It does not pause unrelated Spotify music that was never controlled by this app.
+The sensor's idle timeout still determines when cadence reaches 0.
+
+At a steady matching pace, playback resumes automatically. If the same song is
+still selected and paused in Spotify, it resumes from its current position;
+otherwise the new matched song starts. At a different pace, cached candidates
+are considered before another network lookup.
+
+Playback changes are **immediate**, as selected for this POC: no fade effects
+and no changes to the phone's media volume. Zero-cadence stopping operates while
+this screen is active; measurement is suspended when it is hidden. Returning
+requires acquiring a new step rhythm before automatic playback resumes.
 
 ReccoBeats requires no API key. Only the genre seed, target cadence and candidate
 track IDs are sent; raw accelerometer samples stay on the device. Spotify playback
