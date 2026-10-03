@@ -2,7 +2,7 @@ plugins {
     id "com.android.application"
 }
 
-def spotifyClientId = providers.gradleProperty("spotifyClientId").orElse("").get()
+def spotifyClientId = "29fe69d541b94eff9ccff3a1833de39e"
 if (!spotifyClientId.isEmpty() && !(spotifyClientId ==~ /[a-fA-F0-9]{32}/)) {
     throw new GradleException("spotifyClientId must be the 32-character Spotify client ID, not a client secret.")
 }
