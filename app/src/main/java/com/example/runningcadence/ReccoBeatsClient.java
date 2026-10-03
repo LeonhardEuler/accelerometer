@@ -22,6 +22,8 @@ import java.util.regex.Pattern;
 
 public final class ReccoBeatsClient {
     public static final double BPM_TOLERANCE = 2.0;
+    public static final int MIN_POPULARITY = 60;
+    private static final int TARGET_POPULARITY = 80;
     private static final int CANDIDATE_LIMIT = 100;
     private static final int FEATURE_BATCH_SIZE = 40;
     private static final String BASE_URL = "https://api.reccobeats.com";
@@ -46,15 +48,26 @@ public final class ReccoBeatsClient {
         checkCancelled();
         JsonArray recommendations = content(transport.get(BASE_URL
                 + "/v1/track/recommendation?size=" + CANDIDATE_LIMIT
-                + "&seeds=" + genre.seedTrackId + "&tempo=" + cadence + "&featureWeight=5"));
+                + "&seeds=" + genre.seedTrackId + "&tempo=" + cadence
+                + "&popularity=" + TARGET_POPULARITY + "&featureWeight=5"));
         if (recommendations.size() > CANDIDATE_LIMIT) {
             throw new IOException("ReccoBeats returned more recommendations than requested.");
         }
 
         Map<String, Candidate> candidates = new LinkedHashMap<>();
         int unavailable = 0;
+        int belowPopularity = 0;
         for (JsonElement element : recommendations) {
             JsonObject track = object(element);
+            Integer popularity = readPopularity(track);
+            if (popularity == null) {
+                unavailable++;
+                continue;
+            }
+            if (popularity < MIN_POPULARITY) {
+                belowPopularity++;
+                continue;
+            }
             String id = requiredText(track, "id");
             String title = requiredText(track, "trackTitle");
             String spotifyId = spotifyId(optionalText(track, "href"));
@@ -70,10 +83,10 @@ public final class ReccoBeatsClient {
             for (JsonElement artist : artists.getAsJsonArray()) {
                 names.add(requiredText(object(artist), "name"));
             }
-            candidates.put(id, new Candidate(title, join(names, ", "), spotifyId));
+            candidates.put(id, new Candidate(title, join(names, ", "), spotifyId, popularity));
         }
         if (candidates.isEmpty()) {
-            return new Result(Collections.emptyList(), recommendations.size(), unavailable);
+            return new Result(Collections.emptyList(), recommendations.size(), unavailable, belowPopularity);
         }
 
         Map<String, Double> tempos = new HashMap<>();
@@ -112,10 +125,30 @@ public final class ReccoBeatsClient {
             }
             Candidate track = entry.getValue();
             if (seenSpotifyIds.add(track.spotifyId)) {
-                songs.add(new Song(track.title, track.artist, track.spotifyId, bpm));
+                songs.add(new Song(track.title, track.artist, track.spotifyId, bpm, track.popularity));
             }
         }
-        return new Result(Collections.unmodifiableList(songs), recommendations.size(), unavailable);
+        return new Result(Collections.unmodifiableList(songs), recommendations.size(), unavailable, belowPopularity);
+    }
+
+    public static boolean isEligible(Song song, int cadence) {
+        return song != null && song.popularity >= MIN_POPULARITY
+                && Math.abs(song.bpm - cadence) <= BPM_TOLERANCE;
+    }
+
+    private static Integer readPopularity(JsonObject track) throws IOException {
+        JsonElement value = track.get("popularity");
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            throw new IOException("ReccoBeats returned a non-numeric popularity.");
+        }
+        double score = value.getAsDouble();
+        if (Double.isNaN(score) || score < 0 || score > 100 || score != Math.floor(score)) {
+            throw new IOException("ReccoBeats returned a popularity outside the integer range 0-100.");
+        }
+        return (int) score;
     }
 
     private static String join(Iterable<String> values, String separator) {
@@ -186,11 +219,13 @@ public final class ReccoBeatsClient {
         public final List<Song> candidates;
         public final int returnedTracks;
         public final int unavailableTracks;
+        public final int belowPopularityTracks;
 
-        Result(List<Song> candidates, int returnedTracks, int unavailableTracks) {
+        Result(List<Song> candidates, int returnedTracks, int unavailableTracks, int belowPopularityTracks) {
             this.candidates = candidates;
             this.returnedTracks = returnedTracks;
             this.unavailableTracks = unavailableTracks;
+            this.belowPopularityTracks = belowPopularityTracks;
         }
 
         public List<Song> matchesFor(int cadence, String excludedSpotifyId) {
@@ -201,7 +236,7 @@ public final class ReccoBeatsClient {
             List<Song> matches = new ArrayList<>();
             for (Song song : candidates) {
                 if (!song.spotifyId.equals(excludedSpotifyId)
-                        && Math.abs(song.bpm - cadence) <= BPM_TOLERANCE) {
+                        && isEligible(song, cadence)) {
                     matches.add(song);
                 }
             }
@@ -215,11 +250,13 @@ public final class ReccoBeatsClient {
         final String title;
         final String artist;
         final String spotifyId;
+        final int popularity;
 
-        Candidate(String title, String artist, String spotifyId) {
+        Candidate(String title, String artist, String spotifyId, int popularity) {
             this.title = title;
             this.artist = artist;
             this.spotifyId = spotifyId;
+            this.popularity = popularity;
         }
     }
 }

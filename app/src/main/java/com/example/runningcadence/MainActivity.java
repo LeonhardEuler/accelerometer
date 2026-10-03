@@ -64,9 +64,11 @@ public final class MainActivity extends Activity
     private static final int SENSOR_PERIOD_US = 20_000;
     private static final long SENSOR_STALE_MS = 1_500;
     private static final int MOTION_PERMISSION_REQUEST = 100;
+    private static final double SONG_CHANGE_THRESHOLD = 5.0;
     private final StepCadenceDetector detector = new StepCadenceDetector();
     private final StepCadenceTracker systemCadence = new StepCadenceTracker();
     private final CadenceStabilityTracker stability = new CadenceStabilityTracker();
+    private final CadenceSmoother cadenceSmoother = new CadenceSmoother();
     private final MusicSearchGate searchGate = new MusicSearchGate();
     private final HttpJsonTransport transport = new HttpJsonTransport();
     private final ReccoBeatsClient reccoBeats = new ReccoBeatsClient(transport);
@@ -85,6 +87,7 @@ public final class MainActivity extends Activity
     private Sensor accelerometer;
     private Sensor stepSensor;
     private TextView cadenceText;
+    private TextView liveCadenceText;
     private TextView statusText;
     private TextView sensorStatus;
     private TextView sensorSource;
@@ -109,6 +112,7 @@ public final class MainActivity extends Activity
     private int requestVersion;
     private int suggestionsCadence;
     private int currentCadence;
+    private int smoothedCadence;
     private int stableCadence;
     private boolean foreground;
     private boolean sensing;
@@ -184,7 +188,9 @@ public final class MainActivity extends Activity
         detector.reset();
         systemCadence.reset();
         stability.reset();
+        cadenceSmoother.reset();
         currentCadence = 0;
+        smoothedCadence = 0;
         stableCadence = 0;
         sensorStartedMs = SystemClock.elapsedRealtime();
         rateWindowStartedMs = sensorStartedMs;
@@ -331,8 +337,10 @@ public final class MainActivity extends Activity
         currentCadence = usingSystemSteps ? systemCadence.getStepsPerMinute(nowNs)
                 : freshSensor ? detector.getStepsPerMinute(nowNs) : 0;
         int detectedSteps = usingSystemSteps ? systemCadence.getTotalSteps() : detector.getTotalSteps();
-        stableCadence = stability.update(currentCadence, now);
-        cadenceText.setText(String.format(Locale.getDefault(), "%d", currentCadence));
+        smoothedCadence = cadenceSmoother.update(currentCadence, now);
+        stableCadence = stability.update(smoothedCadence, now);
+        cadenceText.setText(String.format(Locale.getDefault(), "%d", smoothedCadence));
+        liveCadenceText.setText(getString(R.string.live_cadence, currentCadence));
         if (!usingSystemSteps && !freshSensor) {
             statusText.setText(now - sensorStartedMs <= SENSOR_STALE_MS
                     ? R.string.sensor_waiting : R.string.sensor_no_events);
@@ -349,21 +357,21 @@ public final class MainActivity extends Activity
         if (searching && currentCadence == 0) {
             cancelSearch();
         }
-        if (stableCadence > 0 && !searching) {
+        if (stableCadence > 0 && !searching && !playPending && !pausePending) {
             refreshSuggestions();
-            if ((!selectedSongMatches() || manualSearchRequested) && selectNextMatch()) {
+            if ((!canKeepSelectedSong() || manualSearchRequested) && selectNextMatch()) {
                 showCachedMatchStatus();
             }
-            if ((!selectedSongMatches() || manualSearchRequested)
-                    && searchGate.shouldSearch(genre, currentCadence, now)) {
+            if ((!canKeepSelectedSong() || manualSearchRequested)
+                    && searchGate.shouldSearch(genre, smoothedCadence, now)) {
                 searchMusic(now);
             }
         }
         maybeAutoPlay();
-        playButton.setEnabled(selectedSongMatches() && currentCadence > 0
+        playButton.setEnabled(canKeepSelectedSong() && currentCadence > 0
                 && !playPending && !pausePending);
         long delay = searchGate.remainingDelayMs(now);
-        nextButton.setEnabled(stableCadence > 0 && !searching);
+        nextButton.setEnabled(stableCadence > 0 && !searching && !playPending && !pausePending);
         nextButton.setText(delay > 0 && suggestions.isEmpty()
                 ? getString(R.string.retry_countdown, (delay + 999) / 1000)
                 : getString(R.string.next_match));
@@ -371,9 +379,9 @@ public final class MainActivity extends Activity
 
     private void searchMusic(long now) {
         searching = true;
-        searchGate.started(genre, currentCadence, now);
+        searchGate.started(genre, smoothedCadence, now);
         int version = ++requestVersion;
-        int target = currentCadence;
+        int target = smoothedCadence;
         Genre requestedGenre = genre;
         boolean replaceExisting = manualSearchRequested;
         manualSearchRequested = false;
@@ -406,7 +414,7 @@ public final class MainActivity extends Activity
         suggestionsCadence = 0;
         suggestions.clear();
         if (result.unavailableTracks > 0) {
-            Log.i(TAG, result.unavailableTracks + " recommendations lacked BPM or a Spotify link.");
+            Log.i(TAG, result.unavailableTracks + " recommendations lacked popularity, BPM or a Spotify link.");
         }
         if (stableCadence == 0) {
             manualSearchRequested = replaceExisting;
@@ -414,8 +422,8 @@ public final class MainActivity extends Activity
             return;
         }
         refreshSuggestions();
-        if ((replaceExisting || !selectedSongMatches()) && !selectNextMatch()
-                && !selectedSongMatches()) {
+        if ((replaceExisting || !canKeepSelectedSong()) && !selectNextMatch()
+                && !canKeepSelectedSong() && !isSelectedSongInUse()) {
             clearSong();
         }
         showCachedMatchStatus();
@@ -456,34 +464,46 @@ public final class MainActivity extends Activity
 
     private void refreshSuggestions() {
         if (cachedCandidates == null || stableCadence == 0
-                || suggestionsCadence == currentCadence) {
+                || suggestionsCadence == smoothedCadence) {
             return;
         }
         suggestions.clear();
-        suggestions.addAll(cachedCandidates.matchesFor(currentCadence,
+        suggestions.addAll(cachedCandidates.matchesFor(smoothedCadence,
                 selectedSong == null ? null : selectedSong.spotifyId));
-        suggestionsCadence = currentCadence;
+        suggestionsCadence = smoothedCadence;
         showCachedMatchStatus();
     }
 
-    private boolean selectedSongMatches() {
-        return selectedSong != null
-                && Math.abs(selectedSong.bpm - currentCadence) <= ReccoBeatsClient.BPM_TOLERANCE;
+    private boolean canKeepSelectedSong() {
+        if (selectedSong == null) {
+            return false;
+        }
+        if (!isSelectedSongInUse()) {
+            return ReccoBeatsClient.isEligible(selectedSong, smoothedCadence);
+        }
+        return selectedSong.popularity >= ReccoBeatsClient.MIN_POPULARITY
+                && Math.abs(selectedSong.bpm - smoothedCadence) <= SONG_CHANGE_THRESHOLD;
+    }
+
+    private boolean isSelectedSongInUse() {
+        return selectedSong != null && (selectedSong.spotifyId.equals(lastPlayedId)
+                || (pausedForCadence && managedSong != null
+                && selectedSong.spotifyId.equals(managedSong.spotifyId)));
     }
 
     private void showCachedMatchStatus() {
         if (cachedCandidates == null || stableCadence == 0) {
             return;
         }
-        int matches = cachedCandidates.matchesFor(currentCadence, null).size();
+        int matches = cachedCandidates.matchesFor(smoothedCadence, null).size();
         if (matches == 0) {
-            musicStatus.setText(getString(R.string.no_matching_music, currentCadence,
+            musicStatus.setText(getString(R.string.no_matching_music, smoothedCadence,
                     cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
-                    cachedCandidates.unavailableTracks));
+                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks));
         } else {
-            musicStatus.setText(getString(R.string.matches_found, currentCadence, matches,
+            musicStatus.setText(getString(R.string.matches_found, smoothedCadence, matches,
                     cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
-                    cachedCandidates.unavailableTracks));
+                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks));
         }
     }
 
@@ -494,13 +514,14 @@ public final class MainActivity extends Activity
         while (!suggestions.isEmpty()) {
             Song song = suggestions.removeFirst();
             if ((selectedSong != null && song.spotifyId.equals(selectedSong.spotifyId))
-                    || Math.abs(song.bpm - currentCadence) > ReccoBeatsClient.BPM_TOLERANCE) {
+                    || !ReccoBeatsClient.isEligible(song, smoothedCadence)) {
                 continue;
             }
             selectedSong = song;
             manualSearchRequested = false;
             lastAutoAttemptId = null;
-            songText.setText(getString(R.string.song_details, song.title, song.artist, song.bpm));
+            songText.setText(getString(R.string.song_details,
+                    song.title, song.artist, song.bpm, song.popularity));
             playButton.setEnabled(true);
             openButton.setEnabled(true);
             maybeAutoPlay();
@@ -518,7 +539,7 @@ public final class MainActivity extends Activity
     }
 
     private void maybeAutoPlay() {
-        if (foreground && sensing && stableCadence > 0 && selectedSongMatches()
+        if (foreground && sensing && stableCadence > 0 && canKeepSelectedSong()
                 && spotify.isConnected()
                 && !playPending && !pausePending
                 && (!pausedForCadence || spotifyTrackUri != null)
@@ -550,7 +571,7 @@ public final class MainActivity extends Activity
         if (selectedSong == null) {
             return;
         }
-        if (currentCadence == 0 || !selectedSongMatches()) {
+        if (currentCadence == 0 || !canKeepSelectedSong()) {
             manualPlayRequested = false;
             spotifyStatus.setText(R.string.playback_waiting_for_cadence);
             return;
@@ -853,13 +874,16 @@ public final class MainActivity extends Activity
 
         TextView title = createText(getString(R.string.title), 22, Color.LTGRAY);
         cadenceText = createText("0", 80, Color.WHITE);
+        liveCadenceText = createText(getString(R.string.live_cadence, 0), 16, Color.LTGRAY);
         TextView unit = createText(getString(R.string.steps_per_minute), 20, Color.LTGRAY);
         statusText = createText(getString(R.string.start_running), 16, Color.rgb(96, 205, 255));
 
         layout.addView(title);
         layout.addView(cadenceText);
         layout.addView(unit);
+        layout.addView(liveCadenceText);
         layout.addView(statusText);
+        layout.addView(createText(getString(R.string.song_change_hint), 13, Color.LTGRAY));
         sensorSource = createText("", 14, Color.rgb(96, 205, 255));
         layout.addView(sensorSource);
         sensorStatus = createText(getString(R.string.sensor_waiting), 13, Color.LTGRAY);

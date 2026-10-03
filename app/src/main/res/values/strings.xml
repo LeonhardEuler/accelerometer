@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Running Cadence</string>
-    <string name="title">Current cadence</string>
+    <string name="title">30-second average cadence</string>
+    <string name="live_cadence">Live cadence: %1$d steps per minute</string>
+    <string name="song_change_hint">Automatic song changes only when the song differs from the average by more than 5 BPM. New songs match within 2 BPM.</string>
     <string name="steps_per_minute">steps per minute</string>
     <string name="start_running">Start running to measure cadence</string>
     <string name="accelerometer_unavailable">This device has no accelerometer</string>
@@ -22,7 +24,7 @@
     <string name="stabilizing">Keep a steady pace for 5 seconds (100-240 steps/min)</string>
     <string name="cadence_stable">Cadence stable</string>
     <string name="genre_label">Music genre</string>
-    <string name="genre_hint">Genre is approximated using seed songs, not a strict genre filter.</string>
+    <string name="genre_hint">Genre is approximated using seed songs, not a strict genre filter. Minimum popularity: 60/100.</string>
     <string-array name="genres">
         <item>Pop</item>
         <item>Rock</item>
@@ -34,17 +36,17 @@
         <item>Indie</item>
     </string-array>
     <string name="waiting_for_cadence">Music matching starts once your cadence stabilizes.</string>
-    <string name="searching_music">Searching ReccoBeats near %1$d BPM...</string>
+    <string name="searching_music">Searching popular songs near %1$d BPM...</string>
     <string name="cadence_changed">Pace changed or measurement paused. Waiting for steady cadence.</string>
-    <string name="no_matching_music">No cached song within 2 BPM of %1$d. Verified %2$d of %3$d recommendations; unavailable: %4$d. Try another match or genre.</string>
-    <string name="matches_found">Cadence %1$d: %2$d matches within 2 BPM. Verified %3$d of %4$d recommendations; unavailable: %5$d.</string>
-    <string name="cached_waiting_cadence">Cached %1$d verified songs. Waiting for steady cadence to choose a match.</string>
+    <string name="no_matching_music">No new popular cached song within 2 BPM of average %1$d. Verified %2$d of %3$d recommendations; below popularity 60: %4$d; unavailable: %5$d. Try another match or genre.</string>
+    <string name="matches_found">Average %1$d: %2$d popular matches within 2 BPM. Verified %3$d of %4$d recommendations; below popularity 60: %5$d; unavailable: %6$d.</string>
+    <string name="cached_waiting_cadence">Cached %1$d verified popular songs. Waiting for steady cadence to choose a match.</string>
     <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Find another match.</string>
     <string name="rate_limited">ReccoBeats rate limit reached. Wait %1$d seconds before retrying.</string>
     <string name="waiting_for_search">Another search is queued; waiting for steady cadence and the request cooldown.</string>
     <string name="retry_countdown">Find another match (search in %1$d s)</string>
     <string name="next_match">Find another match</string>
-    <string name="song_details">%1$s\n%2$s\n%3$.1f BPM</string>
+    <string name="song_details">%1$s\n%2$s\n%3$.1f BPM | Popularity: %4$d/100</string>
     <string name="no_song">No song matched yet</string>
     <string name="play_match">Play matched song</string>
     <string name="open_spotify">Open song in Spotify</string>
@@ -74,7 +76,7 @@
     <string name="starting_spotify_playback">Requesting playback in Spotify...</string>
     <string name="pausing_for_cadence">Cadence is 0. Pausing Spotify...</string>
     <string name="paused_for_cadence">Spotify paused because cadence is 0. Playback resumes automatically at a steady matching pace.</string>
-    <string name="playback_waiting_for_cadence">Start running before playback. The song must be within 2 BPM of your current cadence.</string>
+    <string name="playback_waiting_for_cadence">Start running before playback. New songs must match the average within 2 BPM; the current song is kept until the difference exceeds 5 BPM.</string>
     <string name="spotify_pause_failed">Could not pause Spotify (%1$s). Pause it in Spotify or reconnect.</string>
     <string name="spotify_playback_accepted">Playback requested in Spotify: %1$s</string>
     <string name="spotify_playing">Spotify playing: %1$s</string>
