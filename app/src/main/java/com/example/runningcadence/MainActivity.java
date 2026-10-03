@@ -3,6 +3,7 @@ package com.example.runningcadence;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -16,6 +17,10 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -65,6 +70,12 @@ public final class MainActivity extends Activity
     private static final long SENSOR_STALE_MS = 1_500;
     private static final int MOTION_PERMISSION_REQUEST = 100;
     private static final double SONG_CHANGE_THRESHOLD = 5.0;
+    private static final long TRACK_CHANGE_CHIME_MS = 600;
+
+    private enum SelectionReason {
+        AUTOMATIC, TEMPO_CHANGE, MANUAL_SKIP
+    }
+
     private final StepCadenceDetector detector = new StepCadenceDetector();
     private final StepCadenceTracker systemCadence = new StepCadenceTracker();
     private final CadenceStabilityTracker stability = new CadenceStabilityTracker();
@@ -75,6 +86,7 @@ public final class MainActivity extends Activity
     private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
     private final Deque<Song> suggestions = new ArrayDeque<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable stopChimeTask = this::stopTrackChangeChime;
     private final Runnable uiRefresh = new Runnable() {
         @Override
         public void run() {
@@ -108,6 +120,8 @@ public final class MainActivity extends Activity
     private String lastPlayedId;
     private String lastAutoAttemptId;
     private String spotifyTrackUri;
+    private String pendingTrackChangeChimeId;
+    private Ringtone trackChangeChime;
     private Future<?> searchTask;
     private int requestVersion;
     private int suggestionsCadence;
@@ -125,6 +139,7 @@ public final class MainActivity extends Activity
     private boolean pausedForCadence;
     private boolean pauseAttemptedForStop;
     private boolean interactiveSpotifyConnection;
+    private boolean notifyOnTrackStart;
     private long sensorStartedMs;
     private long lastSensorCallbackMs = -1;
     private long rateWindowStartedMs;
@@ -274,6 +289,9 @@ public final class MainActivity extends Activity
 
     @Override
     protected void onPause() {
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
+        stopTrackChangeChime();
         sensing = false;
         stableCadence = 0;
         stability.reset();
@@ -298,6 +316,7 @@ public final class MainActivity extends Activity
 
     @Override
     protected void onDestroy() {
+        stopTrackChangeChime();
         spotify.disconnect();
         searchExecutor.shutdownNow();
         handler.removeCallbacksAndMessages(null);
@@ -361,8 +380,13 @@ public final class MainActivity extends Activity
         }
         if (stableCadence > 0 && !searching && !playPending && !pausePending) {
             refreshSuggestions();
-            if ((!canKeepSelectedSong() || manualSearchRequested) && selectNextMatch()) {
+            boolean skipRequested = manualSearchRequested;
+            if ((!canKeepSelectedSong() || manualSearchRequested)
+                    && selectNextMatch(selectionReason(manualSearchRequested))) {
                 showCachedMatchStatus();
+                if (skipRequested) {
+                    playSelectedSong();
+                }
             }
             if ((!canKeepSelectedSong() || manualSearchRequested)
                     && searchGate.shouldSearch(genre, smoothedCadence, now)) {
@@ -424,11 +448,19 @@ public final class MainActivity extends Activity
             return;
         }
         refreshSuggestions();
-        if ((replaceExisting || !canKeepSelectedSong()) && !selectNextMatch()
-                && !canKeepSelectedSong() && !isSelectedSongInUse()) {
+        boolean wantsNewSong = replaceExisting || !canKeepSelectedSong();
+        boolean selectedNewSong = wantsNewSong && selectNextMatch(selectionReason(replaceExisting));
+        if (wantsNewSong && !selectedNewSong && !canKeepSelectedSong() && !isSelectedSongInUse()) {
             clearSong();
         }
+        if (replaceExisting && !selectedNewSong) {
+            musicStatus.setText(getString(R.string.no_next_matching_song, smoothedCadence));
+            return;
+        }
         showCachedMatchStatus();
+        if (replaceExisting && selectedNewSong) {
+            playSelectedSong();
+        }
     }
 
     private void failSearch(int version, IOException error) {
@@ -509,7 +541,15 @@ public final class MainActivity extends Activity
         }
     }
 
-    private boolean selectNextMatch() {
+    private SelectionReason selectionReason(boolean manualSelection) {
+        if (manualSelection) {
+            return SelectionReason.MANUAL_SKIP;
+        }
+        return notifyOnTrackStart || (isSelectedSongInUse() && !canKeepSelectedSong())
+                ? SelectionReason.TEMPO_CHANGE : SelectionReason.AUTOMATIC;
+    }
+
+    private boolean selectNextMatch(SelectionReason reason) {
         if (stableCadence == 0) {
             return false;
         }
@@ -519,7 +559,14 @@ public final class MainActivity extends Activity
                     || !ReccoBeatsClient.isEligible(song, smoothedCadence)) {
                 continue;
             }
+            if (reason == SelectionReason.MANUAL_SKIP
+                    && (song.spotifyUri().equals(spotifyTrackUri)
+                    || (spotifyTrackUri == null && song.spotifyId.equals(lastPlayedId)))) {
+                continue;
+            }
             selectedSong = song;
+            notifyOnTrackStart = reason == SelectionReason.TEMPO_CHANGE;
+            pendingTrackChangeChimeId = null;
             manualSearchRequested = false;
             lastAutoAttemptId = null;
             songText.setText(getString(R.string.song_details,
@@ -534,6 +581,8 @@ public final class MainActivity extends Activity
 
     private void clearSong() {
         selectedSong = null;
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
         manualPlayRequested = false;
         songText.setText(R.string.no_song);
         playButton.setEnabled(false);
@@ -556,6 +605,9 @@ public final class MainActivity extends Activity
             pauseAttemptedForStop = false;
             return;
         }
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
+        stopTrackChangeChime();
         boolean ownsCurrentPlayback = managedSong != null
                 && (playPending || managedSong.spotifyUri().equals(spotifyTrackUri));
         if (!foreground || !spotify.isConnected() || !ownsCurrentPlayback
@@ -588,10 +640,14 @@ public final class MainActivity extends Activity
         }
         manualPlayRequested = false;
         lastAutoAttemptId = selectedSong.spotifyId;
+        boolean resuming = pausedForCadence && selectedSong.spotifyUri().equals(spotifyTrackUri);
+        pendingTrackChangeChimeId = notifyOnTrackStart && !resuming
+                && !selectedSong.spotifyId.equals(lastPlayedId) ? selectedSong.spotifyId : null;
+        notifyOnTrackStart = false;
         managedSong = selectedSong;
         playPending = true;
         spotifyStatus.setText(R.string.starting_spotify_playback);
-        if (pausedForCadence && selectedSong.spotifyUri().equals(spotifyTrackUri)) {
+        if (resuming) {
             spotify.resume(selectedSong);
         } else {
             spotify.play(selectedSong);
@@ -661,6 +717,8 @@ public final class MainActivity extends Activity
 
     @Override
     public void onSpotifyConnectionFailed(Throwable error) {
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
         playPending = false;
         pausePending = false;
         updateConnectButton();
@@ -707,6 +765,8 @@ public final class MainActivity extends Activity
 
     @Override
     public void onPlaybackPaused() {
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
         pausePending = false;
         pausedForCadence = true;
         lastAutoAttemptId = null;
@@ -723,6 +783,8 @@ public final class MainActivity extends Activity
 
     @Override
     public void onPlaybackFailed(Throwable error) {
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
         playPending = false;
         Log.e(TAG, "Spotify playback failed.", error);
         spotifyStatus.setText(getString(R.string.spotify_playback_failed,
@@ -745,6 +807,60 @@ public final class MainActivity extends Activity
                     ? R.string.spotify_paused : R.string.spotify_playing, state.track.name));
         }
         pauseIfStopped();
+        if (foreground && sensing && currentCadence > 0 && !pausePending
+                && pendingTrackChangeChimeId != null && state.track != null && !state.isPaused
+                && ("spotify:track:" + pendingTrackChangeChimeId).equals(state.track.uri)) {
+            pendingTrackChangeChimeId = null;
+            playTrackChangeChime();
+        }
+    }
+
+    private void playTrackChangeChime() {
+        stopTrackChangeChime();
+        AudioManager audio = getSystemService(AudioManager.class);
+        NotificationManager notifications = getSystemService(NotificationManager.class);
+        if (audio == null || notifications == null) {
+            Log.w(TAG, "Notification audio services are unavailable.");
+            Toast.makeText(this, R.string.track_change_sound_unavailable, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (audio.getRingerMode() != AudioManager.RINGER_MODE_NORMAL
+                || audio.getStreamVolume(AudioManager.STREAM_NOTIFICATION) == 0
+                || notifications.getCurrentInterruptionFilter() != NotificationManager.INTERRUPTION_FILTER_ALL) {
+            Log.d(TAG, "Track-change chime muted by notification settings.");
+            return;
+        }
+        try {
+            if (RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_NOTIFICATION) == null) {
+                Log.d(TAG, "No default notification sound is selected.");
+                return;
+            }
+            trackChangeChime = RingtoneManager.getRingtone(this,
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION));
+            if (trackChangeChime == null) {
+                Log.w(TAG, "Could not load the notification sound.");
+                Toast.makeText(this, R.string.track_change_sound_unavailable, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            trackChangeChime.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            trackChangeChime.play();
+            handler.postDelayed(stopChimeTask, TRACK_CHANGE_CHIME_MS);
+        } catch (SecurityException | IllegalArgumentException error) {
+            stopTrackChangeChime();
+            Log.w(TAG, "Could not play the track-change notification.", error);
+            Toast.makeText(this, R.string.track_change_sound_unavailable, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void stopTrackChangeChime() {
+        handler.removeCallbacks(stopChimeTask);
+        if (trackChangeChime != null) {
+            trackChangeChime.stop();
+            trackChangeChime = null;
+        }
     }
 
     private void openInSpotify() {
@@ -944,13 +1060,17 @@ public final class MainActivity extends Activity
         playButton.setEnabled(false);
         layout.addView(playButton);
         nextButton = createButton(R.string.next_match, view -> {
+            notifyOnTrackStart = false;
+            pendingTrackChangeChimeId = null;
+            stopTrackChangeChime();
             refreshSuggestions();
-            if (!selectNextMatch()) {
+            if (!selectNextMatch(SelectionReason.MANUAL_SKIP)) {
                 manualSearchRequested = true;
                 searchGate.requestAnother();
                 musicStatus.setText(R.string.waiting_for_search);
             } else {
                 showCachedMatchStatus();
+                playSelectedSong();
             }
         });
         nextButton.setEnabled(false);

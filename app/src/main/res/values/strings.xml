@@ -42,11 +42,12 @@
     <string name="no_matching_music">No new popular cached song within 2 BPM of average %1$d. Verified %2$d of %3$d recommendations; below popularity 60: %4$d; unavailable: %5$d. Try another match or genre.</string>
     <string name="matches_found">Average %1$d: %2$d popular matches within 2 BPM. Verified %3$d of %4$d recommendations; below popularity 60: %5$d; unavailable: %6$d.</string>
     <string name="cached_waiting_cadence">Cached %1$d verified popular songs. Waiting for steady cadence to choose a match.</string>
-    <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Find another match.</string>
+    <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Skip to next song.</string>
     <string name="rate_limited">ReccoBeats rate limit reached. Wait %1$d seconds before retrying.</string>
-    <string name="waiting_for_search">Another search is queued; waiting for steady cadence and the request cooldown.</string>
-    <string name="retry_countdown">Find another match (search in %1$d s)</string>
-    <string name="next_match">Find another match</string>
+    <string name="waiting_for_search">Skip requested. Looking for another matching song once cadence is steady and the search cooldown ends.</string>
+    <string name="retry_countdown">Skip to next song (search in %1$d s)</string>
+    <string name="next_match">Skip to next song</string>
+    <string name="no_next_matching_song">No other popular song within 2 BPM of average %1$d was found. Nothing was skipped. Try again or change style.</string>
     <string name="song_details">%1$s\n%2$s\n%3$.1f BPM | Popularity: %4$d/100</string>
     <string name="no_song">No song matched yet</string>
     <string name="play_match">Play matched song</string>
@@ -81,6 +82,7 @@
     <string name="spotify_pause_failed">Could not pause Spotify (%1$s). Pause it in Spotify or reconnect.</string>
     <string name="spotify_playback_accepted">Playback requested in Spotify: %1$s</string>
     <string name="spotify_playing">Spotify playing: %1$s</string>
+    <string name="track_change_sound_unavailable">Song changed, but the notification sound could not be played.</string>
     <string name="spotify_paused">Spotify paused: %1$s</string>
     <string name="spotify_connection_failed">Spotify connection failed (%1$s). Open Spotify, confirm it is signed in and online, then retry. Copy the details below if it still fails.</string>
     <string name="spotify_connection_timed_out">Spotify did not complete the connection (%1$s). No credential rejection was received. Open Spotify, confirm it is signed in and online, return here, then retry.</string>

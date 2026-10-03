@@ -71,7 +71,7 @@ Kotlin or server component.
 - Once a song has started, it is retained until its BPM differs from the smoothed
   cadence by **more than 5 BPM**. At exactly 5 BPM it is still kept. This prevents
   constant song switching around the tighter search threshold. Explicit genre
-  changes and **Find another match** still select a new song on request.
+  changes and **Skip to next song** still select a new song on request.
 - Changing cadence re-filters the cache without a network request. Results
   arriving during a cadence change are retained rather than discarded. A genre
   change clears the cache. This improves coverage but cannot guarantee a match
@@ -79,7 +79,7 @@ Kotlin or server component.
 - A new search is considered when the current song and cached alternatives do
   cannot satisfy the retention/search thresholds at a new stable smoothed cadence,
   when the genre changes, or when explicitly
-  requested with **Find another match** after cached alternatives are exhausted.
+  requested with **Skip to next song** after cached alternatives are exhausted.
   Searches retain a 30-second cooldown and honor server `Retry-After` delays.
   An unchanged cadence does not repeatedly retry a failed or empty lookup.
 - Missing popularity/BPM, missing Spotify links, no matches, network errors and rate limits
@@ -101,6 +101,21 @@ At a steady pace within the retention threshold, playback resumes automatically.
 still selected and paused in Spotify, it resumes from its current position;
 otherwise the new matched song starts. At a different pace, cached candidates
 are considered before another network lookup.
+
+An automatic tempo-driven track change plays up to **600 ms of the phone's
+default notification sound**, once Spotify reports the new track as playing.
+Initial playback, manual track/genre choices, resumes, failed requests and
+cancelled transitions do not chime. The sound respects notification volume,
+silent/vibrate mode and Do Not Disturb, and stops when the app loses focus or
+live cadence reaches zero. It does not change the phone's volume.
+
+**Skip to next song** selects and plays a different matching track from the
+cached recommendations. If none remain, it requests more recommendations subject
+to the existing search cooldown. It keeps the popularity and BPM requirements,
+does not jump into Spotify's unrelated queue, and reports when no alternative
+was found rather than restarting the current song. Manual skips do not chime.
+The control is disabled while stopped, while cadence is unsettled or while a
+search/playback command is in progress.
 
 Playback changes are **immediate**, as selected for this POC: no fade effects
 and no changes to the phone's media volume. Zero-cadence stopping operates while
