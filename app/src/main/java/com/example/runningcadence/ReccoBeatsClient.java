@@ -41,14 +41,24 @@ public final class ReccoBeatsClient {
     }
 
     public Result findCandidates(Genre genre, int cadence) throws IOException {
+        if (genre == null) {
+            throw new IllegalArgumentException("A running music style is required.");
+        }
+        return findCandidates(genre, cadence, new SongFeedback().snapshot(genre));
+    }
+
+    public Result findCandidates(Genre genre, int cadence, SongFeedback.Snapshot feedback) throws IOException {
         if (genre == null || cadence < CadenceStabilityTracker.MIN_CADENCE
                 || cadence > CadenceStabilityTracker.MAX_CADENCE) {
             throw new IllegalArgumentException("A genre and running cadence of 100-240 are required.");
         }
         checkCancelled();
+        String positiveSeeds = URLEncoder.encode(join(feedback.positiveSeeds, ","), "UTF-8");
+        String negativeSeeds = feedback.negativeSeeds.isEmpty() ? ""
+                : "&negativeSeeds=" + URLEncoder.encode(join(feedback.negativeSeeds, ","), "UTF-8");
         JsonArray recommendations = content(transport.get(BASE_URL
                 + "/v1/track/recommendation?size=" + CANDIDATE_LIMIT
-                + "&seeds=" + genre.seedTrackId + "&tempo=" + cadence
+                + "&seeds=" + positiveSeeds + negativeSeeds + "&tempo=" + cadence
                 + "&popularity=" + TARGET_POPULARITY + "&featureWeight=5"));
         if (recommendations.size() > CANDIDATE_LIMIT) {
             throw new IOException("ReccoBeats returned more recommendations than requested.");
@@ -57,6 +67,7 @@ public final class ReccoBeatsClient {
         Map<String, Candidate> candidates = new LinkedHashMap<>();
         int unavailable = 0;
         int belowPopularity = 0;
+        int excludedTracks = 0;
         for (JsonElement element : recommendations) {
             JsonObject track = object(element);
             Integer popularity = readPopularity(track);
@@ -75,6 +86,10 @@ public final class ReccoBeatsClient {
                 unavailable++;
                 continue;
             }
+            if (feedback.excludedIds.contains(spotifyId)) {
+                excludedTracks++;
+                continue;
+            }
             JsonElement artists = track.get("artists");
             if (artists == null || !artists.isJsonArray()) {
                 throw new IOException("ReccoBeats returned a track without an artists array.");
@@ -86,7 +101,8 @@ public final class ReccoBeatsClient {
             candidates.put(id, new Candidate(title, join(names, ", "), spotifyId, popularity));
         }
         if (candidates.isEmpty()) {
-            return new Result(Collections.emptyList(), recommendations.size(), unavailable, belowPopularity);
+            return new Result(Collections.emptyList(), recommendations.size(), unavailable,
+                    belowPopularity, excludedTracks);
         }
 
         Map<String, Double> tempos = new HashMap<>();
@@ -128,7 +144,8 @@ public final class ReccoBeatsClient {
                 songs.add(new Song(track.title, track.artist, track.spotifyId, bpm, track.popularity));
             }
         }
-        return new Result(Collections.unmodifiableList(songs), recommendations.size(), unavailable, belowPopularity);
+        return new Result(Collections.unmodifiableList(songs), recommendations.size(), unavailable,
+                belowPopularity, excludedTracks);
     }
 
     public static boolean isEligible(Song song, int cadence) {
@@ -220,15 +237,22 @@ public final class ReccoBeatsClient {
         public final int returnedTracks;
         public final int unavailableTracks;
         public final int belowPopularityTracks;
+        public final int excludedTracks;
 
-        Result(List<Song> candidates, int returnedTracks, int unavailableTracks, int belowPopularityTracks) {
+        Result(List<Song> candidates, int returnedTracks, int unavailableTracks,
+                int belowPopularityTracks, int excludedTracks) {
             this.candidates = candidates;
             this.returnedTracks = returnedTracks;
             this.unavailableTracks = unavailableTracks;
             this.belowPopularityTracks = belowPopularityTracks;
+            this.excludedTracks = excludedTracks;
         }
 
         public List<Song> matchesFor(int cadence, String excludedSpotifyId) {
+            return matchesFor(cadence, excludedSpotifyId, new SongFeedback());
+        }
+
+        public List<Song> matchesFor(int cadence, String excludedSpotifyId, SongFeedback feedback) {
             if (cadence < CadenceStabilityTracker.MIN_CADENCE
                     || cadence > CadenceStabilityTracker.MAX_CADENCE) {
                 throw new IllegalArgumentException("Running cadence must be 100-240.");
@@ -236,6 +260,7 @@ public final class ReccoBeatsClient {
             List<Song> matches = new ArrayList<>();
             for (Song song : candidates) {
                 if (!song.spotifyId.equals(excludedSpotifyId)
+                        && !feedback.isDisliked(song.spotifyId)
                         && isEligible(song, cadence)) {
                     matches.add(song);
                 }

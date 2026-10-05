@@ -1,6 +1,9 @@
 package com.example.runningcadence;
 
 import android.Manifest;
+import android.animation.PropertyValuesHolder;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationManager;
@@ -13,6 +16,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -34,11 +38,14 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -50,6 +57,7 @@ import com.spotify.android.appremote.api.error.NotLoggedInException;
 import com.spotify.android.appremote.api.error.OfflineModeException;
 import com.spotify.android.appremote.api.error.UserNotAuthorizedException;
 import com.spotify.protocol.types.PlayerState;
+import com.google.gson.JsonParseException;
 
 import java.io.IOException;
 import java.security.MessageDigest;
@@ -105,13 +113,27 @@ public final class MainActivity extends Activity
     private TextView sensorSource;
     private TextView musicStatus;
     private TextView songText;
+    private TextView songArtistText;
+    private TextView songMetaText;
+    private TextView connectionBadge;
+    private LinearLayout songInfo;
+    private LinearLayout dashboard;
+    private ProgressBar searchProgress;
+    private CadenceRingView cadenceRing;
+    private ObjectAnimator feedbackAnimator;
     private TextView spotifyStatus;
     private Button connectButton;
     private Button nextButton;
     private Button playButton;
     private Button openButton;
     private Button motionPermissionButton;
+    private Button likeButton;
+    private Button dislikeButton;
+    private Button undoFeedbackButton;
+    private TextView feedbackStatus;
+    private TextView tasteSummary;
     private SharedPreferences preferences;
+    private SongFeedback feedback;
     private SpotifyPlayback spotify;
     private Genre genre;
     private Song selectedSong;
@@ -134,6 +156,12 @@ public final class MainActivity extends Activity
     private boolean searching;
     private boolean manualSearchRequested;
     private boolean manualPlayRequested;
+    private boolean feedbackRefreshPending;
+    private boolean pauseForDislike;
+    private boolean spotifyIsPaused = true;
+    private String dislikedPauseAttemptId;
+    private String undoFeedbackId;
+    private SongFeedback.Rating undoFeedbackRating;
     private boolean playPending;
     private boolean pausePending;
     private boolean pausedForCadence;
@@ -150,6 +178,13 @@ public final class MainActivity extends Activity
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         preferences = getPreferences(MODE_PRIVATE);
+        try {
+            feedback = SongFeedback.fromJson(preferences.getString("song_feedback", "[]"));
+        } catch (JsonParseException | IllegalArgumentException error) {
+            Log.e(TAG, "Could not load saved song feedback.", error);
+            feedback = new SongFeedback();
+            Toast.makeText(this, R.string.feedback_load_failed, Toast.LENGTH_LONG).show();
+        }
         String savedGenre = preferences.getString("running_genre", Genre.DANCE_EDM.name());
         try {
             genre = Genre.valueOf(savedGenre);
@@ -187,6 +222,7 @@ public final class MainActivity extends Activity
     @Override
     protected void onResume() {
         super.onResume();
+        animateEntrance(dashboard);
         startMeasurement();
         if (stepSensor != null && !hasMotionPermission()
                 && !preferences.getBoolean("motion_permission_requested", false)) {
@@ -289,6 +325,7 @@ public final class MainActivity extends Activity
 
     @Override
     protected void onPause() {
+        cancelUiAnimations();
         notifyOnTrackStart = false;
         pendingTrackChangeChimeId = null;
         stopTrackChangeChime();
@@ -310,12 +347,14 @@ public final class MainActivity extends Activity
         playPending = false;
         pausePending = false;
         pauseAttemptedForStop = false;
+        dislikedPauseAttemptId = null;
         updateConnectButton();
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
+        cancelUiAnimations();
         stopTrackChangeChime();
         spotify.disconnect();
         searchExecutor.shutdownNow();
@@ -361,6 +400,7 @@ public final class MainActivity extends Activity
         smoothedCadence = cadenceSmoother.update(currentCadence, now);
         stableCadence = stability.update(smoothedCadence, now);
         cadenceText.setText(String.format(Locale.getDefault(), "%d", smoothedCadence));
+        cadenceRing.setCadence(smoothedCadence, stableCadence > 0);
         liveCadenceText.setText(getString(R.string.live_cadence, currentCadence));
         if (!usingSystemSteps && !freshSensor) {
             statusText.setText(now - sensorStartedMs <= SENSOR_STALE_MS
@@ -388,7 +428,7 @@ public final class MainActivity extends Activity
                     playSelectedSong();
                 }
             }
-            if ((!canKeepSelectedSong() || manualSearchRequested)
+            if ((feedbackRefreshPending || !canKeepSelectedSong() || manualSearchRequested)
                     && searchGate.shouldSearch(genre, smoothedCadence, now)) {
                 searchMusic(now);
             }
@@ -401,20 +441,25 @@ public final class MainActivity extends Activity
         nextButton.setText(delay > 0 && suggestions.isEmpty()
                 ? getString(R.string.retry_countdown, (delay + 999) / 1000)
                 : getString(R.string.next_match));
+        updateFeedbackButtons();
+        searchProgress.setVisibility(searching ? View.VISIBLE : View.GONE);
     }
 
     private void searchMusic(long now) {
         searching = true;
+        searchProgress.setVisibility(View.VISIBLE);
         searchGate.started(genre, smoothedCadence, now);
         int version = ++requestVersion;
         int target = smoothedCadence;
         Genre requestedGenre = genre;
         boolean replaceExisting = manualSearchRequested;
         manualSearchRequested = false;
+        feedbackRefreshPending = false;
+        SongFeedback.Snapshot feedbackSnapshot = feedback.snapshot(requestedGenre);
         musicStatus.setText(getString(R.string.searching_music, target));
         searchTask = searchExecutor.submit(() -> {
             try {
-                ReccoBeatsClient.Result result = reccoBeats.findCandidates(requestedGenre, target);
+                ReccoBeatsClient.Result result = reccoBeats.findCandidates(requestedGenre, target, feedbackSnapshot);
                 handler.post(() -> finishSearch(version, requestedGenre, result, replaceExisting));
             } catch (IOException error) {
                 handler.post(() -> failSearch(version, error));
@@ -432,6 +477,7 @@ public final class MainActivity extends Activity
             return;
         }
         searching = false;
+        searchProgress.setVisibility(View.GONE);
         searchTask = null;
         if (genre != requestedGenre) {
             return;
@@ -448,13 +494,15 @@ public final class MainActivity extends Activity
             return;
         }
         refreshSuggestions();
+        boolean rejectedSong = selectedSong != null && feedback.isDisliked(selectedSong.spotifyId);
         boolean wantsNewSong = replaceExisting || !canKeepSelectedSong();
         boolean selectedNewSong = wantsNewSong && selectNextMatch(selectionReason(replaceExisting));
         if (wantsNewSong && !selectedNewSong && !canKeepSelectedSong() && !isSelectedSongInUse()) {
             clearSong();
         }
         if (replaceExisting && !selectedNewSong) {
-            musicStatus.setText(getString(R.string.no_next_matching_song, smoothedCadence));
+            musicStatus.setText(getString(rejectedSong
+                    ? R.string.no_next_after_dislike : R.string.no_next_matching_song, smoothedCadence));
             return;
         }
         showCachedMatchStatus();
@@ -468,6 +516,7 @@ public final class MainActivity extends Activity
             return;
         }
         searching = false;
+        searchProgress.setVisibility(View.GONE);
         searchTask = null;
         Log.e(TAG, "Music lookup failed.", error);
         if (error instanceof HttpJsonTransport.ApiException
@@ -487,6 +536,7 @@ public final class MainActivity extends Activity
         }
         requestVersion++;
         searching = false;
+        searchProgress.setVisibility(View.GONE);
         if (searchTask != null) {
             searchTask.cancel(true);
             searchTask = null;
@@ -503,13 +553,13 @@ public final class MainActivity extends Activity
         }
         suggestions.clear();
         suggestions.addAll(cachedCandidates.matchesFor(smoothedCadence,
-                selectedSong == null ? null : selectedSong.spotifyId));
+                selectedSong == null ? null : selectedSong.spotifyId, feedback));
         suggestionsCadence = smoothedCadence;
         showCachedMatchStatus();
     }
 
     private boolean canKeepSelectedSong() {
-        if (selectedSong == null) {
+        if (selectedSong == null || feedback.isDisliked(selectedSong.spotifyId)) {
             return false;
         }
         if (!isSelectedSongInUse()) {
@@ -529,15 +579,17 @@ public final class MainActivity extends Activity
         if (cachedCandidates == null || stableCadence == 0) {
             return;
         }
-        int matches = cachedCandidates.matchesFor(smoothedCadence, null).size();
+        int matches = cachedCandidates.matchesFor(smoothedCadence, null, feedback).size();
         if (matches == 0) {
             musicStatus.setText(getString(R.string.no_matching_music, smoothedCadence,
                     cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
-                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks));
+                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks,
+                    cachedCandidates.excludedTracks));
         } else {
             musicStatus.setText(getString(R.string.matches_found, smoothedCadence, matches,
                     cachedCandidates.candidates.size(), cachedCandidates.returnedTracks,
-                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks));
+                    cachedCandidates.belowPopularityTracks, cachedCandidates.unavailableTracks,
+                    cachedCandidates.excludedTracks));
         }
     }
 
@@ -545,7 +597,8 @@ public final class MainActivity extends Activity
         if (manualSelection) {
             return SelectionReason.MANUAL_SKIP;
         }
-        return notifyOnTrackStart || (isSelectedSongInUse() && !canKeepSelectedSong())
+        return notifyOnTrackStart || (isSelectedSongInUse()
+                && !feedback.isDisliked(selectedSong.spotifyId) && !canKeepSelectedSong())
                 ? SelectionReason.TEMPO_CHANGE : SelectionReason.AUTOMATIC;
     }
 
@@ -556,6 +609,7 @@ public final class MainActivity extends Activity
         while (!suggestions.isEmpty()) {
             Song song = suggestions.removeFirst();
             if ((selectedSong != null && song.spotifyId.equals(selectedSong.spotifyId))
+                    || feedback.isDisliked(song.spotifyId)
                     || !ReccoBeatsClient.isEligible(song, smoothedCadence)) {
                 continue;
             }
@@ -569,8 +623,7 @@ public final class MainActivity extends Activity
             pendingTrackChangeChimeId = null;
             manualSearchRequested = false;
             lastAutoAttemptId = null;
-            songText.setText(getString(R.string.song_details,
-                    song.title, song.artist, song.bpm, song.popularity));
+            renderSong(true);
             playButton.setEnabled(true);
             openButton.setEnabled(true);
             maybeAutoPlay();
@@ -584,7 +637,7 @@ public final class MainActivity extends Activity
         notifyOnTrackStart = false;
         pendingTrackChangeChimeId = null;
         manualPlayRequested = false;
-        songText.setText(R.string.no_song);
+        renderSong(false);
         playButton.setEnabled(false);
         openButton.setEnabled(false);
     }
@@ -601,6 +654,10 @@ public final class MainActivity extends Activity
     }
 
     private void pauseIfStopped() {
+        if (managedSong != null && feedback.isDisliked(managedSong.spotifyId)) {
+            pauseDislikedSong();
+            return;
+        }
         if (currentCadence > 0) {
             pauseAttemptedForStop = false;
             return;
@@ -615,6 +672,7 @@ public final class MainActivity extends Activity
             return;
         }
         pauseAttemptedForStop = true;
+        pauseForDislike = false;
         pausePending = true;
         playPending = false;
         spotifyStatus.setText(R.string.pausing_for_cadence);
@@ -693,6 +751,9 @@ public final class MainActivity extends Activity
         connectButton.setText(spotify.isConnected() ? R.string.spotify_connected
                 : spotify.isConnecting() ? R.string.connecting_spotify
                 : isSpotifyConfigured() ? R.string.connect_spotify : R.string.spotify_setup);
+        connectionBadge.setText(spotify.isConnected() ? R.string.badge_connected
+                : spotify.isConnecting() ? R.string.badge_connecting : R.string.badge_offline);
+        connectionBadge.setTextColor(getColor(spotify.isConnected() ? R.color.primary : R.color.text_secondary));
     }
 
     @Override
@@ -704,6 +765,7 @@ public final class MainActivity extends Activity
     @Override
     public void onSpotifyConnected() {
         pauseAttemptedForStop = false;
+        dislikedPauseAttemptId = null;
         preferences.edit().putString("spotify_authorized_client_id", spotifyClientId()).apply();
         updateConnectButton();
         spotifyStatus.setText(R.string.spotify_ready);
@@ -756,6 +818,7 @@ public final class MainActivity extends Activity
     public void onPlaybackAccepted(Song song) {
         playPending = false;
         pausedForCadence = false;
+        spotifyIsPaused = false;
         managedSong = song;
         spotifyTrackUri = song.spotifyUri();
         lastPlayedId = song.spotifyId;
@@ -768,14 +831,18 @@ public final class MainActivity extends Activity
         notifyOnTrackStart = false;
         pendingTrackChangeChimeId = null;
         pausePending = false;
-        pausedForCadence = true;
+        pausedForCadence = !pauseForDislike;
+        spotifyIsPaused = true;
         lastAutoAttemptId = null;
-        spotifyStatus.setText(R.string.paused_for_cadence);
+        spotifyStatus.setText(pauseForDislike ? R.string.disliked_track_paused : R.string.paused_for_cadence);
+        pauseForDislike = false;
+        maybeAutoPlay();
     }
 
     @Override
     public void onPlaybackPauseFailed(Throwable error) {
         pausePending = false;
+        pauseForDislike = false;
         Log.e(TAG, "Spotify pause failed.", error);
         spotifyStatus.setText(getString(R.string.spotify_pause_failed, error.getClass().getSimpleName()));
         updateConnectButton();
@@ -793,6 +860,7 @@ public final class MainActivity extends Activity
 
     @Override
     public void onPlayerState(PlayerState state) {
+        spotifyIsPaused = state.isPaused;
         spotifyTrackUri = state.track == null ? null : state.track.uri;
         if (managedSong != null && !managedSong.spotifyUri().equals(spotifyTrackUri)
                 && !playPending && !pausePending) {
@@ -868,6 +936,102 @@ public final class MainActivity extends Activity
             return;
         }
         openExternalUrl(selectedSong.spotifyUrl());
+    }
+
+    private void rateSelectedSong(SongFeedback.Rating rating) {
+        if (selectedSong == null || playPending || pausePending) {
+            return;
+        }
+        Song song = selectedSong;
+        SongFeedback.Rating previous = feedback.rating(song.spotifyId);
+        SongFeedback.Rating next = previous == rating ? SongFeedback.Rating.NEUTRAL : rating;
+        undoFeedbackId = song.spotifyId;
+        undoFeedbackRating = previous;
+        feedback.setRating(song.spotifyId, next);
+        preferences.edit().putString("song_feedback", feedback.toJson()).apply();
+        invalidateFeedbackSearch();
+        feedbackStatus.setText(getString(next == SongFeedback.Rating.LIKED ? R.string.song_liked
+                : next == SongFeedback.Rating.DISLIKED ? R.string.song_disliked
+                : R.string.song_feedback_removed, song.title));
+        updateFeedbackButtons();
+        animateFeedback(next == SongFeedback.Rating.DISLIKED ? dislikeButton : likeButton);
+        if (next == SongFeedback.Rating.DISLIKED) {
+            pauseDislikedSong();
+            skipToNextSong();
+        }
+    }
+
+    private void undoFeedback() {
+        if (undoFeedbackId == null || playPending || pausePending) {
+            return;
+        }
+        feedback.setRating(undoFeedbackId, undoFeedbackRating);
+        preferences.edit().putString("song_feedback", feedback.toJson()).apply();
+        undoFeedbackId = null;
+        dislikedPauseAttemptId = null;
+        invalidateFeedbackSearch();
+        feedbackStatus.setText(R.string.feedback_undone);
+        updateFeedbackButtons();
+    }
+
+    private void invalidateFeedbackSearch() {
+        cancelSearch();
+        suggestions.clear();
+        suggestionsCadence = 0;
+        feedbackRefreshPending = true;
+        searchGate.requestAnother();
+    }
+
+    private void updateFeedbackButtons() {
+        if (likeButton == null) {
+            return;
+        }
+        boolean enabled = selectedSong != null && !playPending && !pausePending;
+        SongFeedback.Rating rating = selectedSong == null ? SongFeedback.Rating.NEUTRAL
+                : feedback.rating(selectedSong.spotifyId);
+        likeButton.setEnabled(enabled);
+        dislikeButton.setEnabled(enabled);
+        likeButton.setText(rating == SongFeedback.Rating.LIKED ? R.string.liked : R.string.like);
+        dislikeButton.setText(rating == SongFeedback.Rating.DISLIKED ? R.string.disliked : R.string.dislike);
+        likeButton.setSelected(rating == SongFeedback.Rating.LIKED);
+        dislikeButton.setSelected(rating == SongFeedback.Rating.DISLIKED);
+        undoFeedbackButton.setVisibility(undoFeedbackId == null ? View.GONE : View.VISIBLE);
+        undoFeedbackButton.setEnabled(!playPending && !pausePending);
+        tasteSummary.setText(getString(R.string.taste_summary,
+                feedback.count(SongFeedback.Rating.LIKED), feedback.count(SongFeedback.Rating.DISLIKED)));
+    }
+
+    private void pauseDislikedSong() {
+        if (managedSong == null || !feedback.isDisliked(managedSong.spotifyId)
+                || !foreground || !spotify.isConnected() || pausePending
+                || managedSong.spotifyId.equals(dislikedPauseAttemptId)
+                || (!playPending && (spotifyIsPaused || !managedSong.spotifyUri().equals(spotifyTrackUri)))) {
+            return;
+        }
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
+        stopTrackChangeChime();
+        dislikedPauseAttemptId = managedSong.spotifyId;
+        pausePending = true;
+        playPending = false;
+        pauseForDislike = true;
+        spotifyStatus.setText(R.string.pausing_disliked_track);
+        spotify.pause();
+    }
+
+    private void skipToNextSong() {
+        notifyOnTrackStart = false;
+        pendingTrackChangeChimeId = null;
+        stopTrackChangeChime();
+        refreshSuggestions();
+        if (!selectNextMatch(SelectionReason.MANUAL_SKIP)) {
+            manualSearchRequested = true;
+            searchGate.requestAnother();
+            musicStatus.setText(R.string.waiting_for_search);
+        } else {
+            showCachedMatchStatus();
+            playSelectedSong();
+        }
     }
 
     private void openExternalUrl(String url) {
@@ -974,49 +1138,67 @@ public final class MainActivity extends Activity
     }
 
     private ScrollView createContentView() {
-        int padding = dp(24);
+        int padding = dp(20);
+        int primaryText = getColor(R.color.text_primary);
+        int secondaryText = getColor(R.color.text_secondary);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(12, 18, 28));
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setGravity(Gravity.CENTER);
-        layout.setPadding(padding, padding, padding, padding);
+        scroll.setClipToPadding(true);
+        scroll.setBackgroundColor(getColor(R.color.background));
+        dashboard = new LinearLayout(this);
+        dashboard.setOrientation(LinearLayout.VERTICAL);
+        dashboard.setPadding(padding, padding, padding, padding);
         scroll.setOnApplyWindowInsetsListener((view, insets) -> {
-            layout.setPadding(padding + insets.getSystemWindowInsetLeft(),
-                    padding + insets.getSystemWindowInsetTop(),
-                    padding + insets.getSystemWindowInsetRight(),
-                    padding + insets.getSystemWindowInsetBottom());
+            scroll.setPadding(insets.getSystemWindowInsetLeft(),
+                    insets.getSystemWindowInsetTop(),
+                    insets.getSystemWindowInsetRight(),
+                    insets.getSystemWindowInsetBottom());
             return insets;
         });
 
-        TextView title = createText(getString(R.string.title), 22, Color.LTGRAY);
-        cadenceText = createText("0", 80, Color.WHITE);
-        liveCadenceText = createText(getString(R.string.live_cadence, 0), 16, Color.LTGRAY);
-        TextView unit = createText(getString(R.string.steps_per_minute), 20, Color.LTGRAY);
-        statusText = createText(getString(R.string.start_running), 16, Color.rgb(96, 205, 255));
+        TextView heading = createText(getString(R.string.dashboard_title), 26, primaryText);
+        heading.setGravity(Gravity.START);
+        heading.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        dashboard.addView(heading);
+        TextView subtitle = createText(getString(R.string.dashboard_subtitle), 14, secondaryText);
+        subtitle.setGravity(Gravity.START);
+        subtitle.setPadding(0, 0, 0, dp(18));
+        dashboard.addView(subtitle);
 
-        layout.addView(title);
-        layout.addView(cadenceText);
-        layout.addView(unit);
-        layout.addView(liveCadenceText);
-        layout.addView(statusText);
-        layout.addView(createText(getString(R.string.song_change_hint), 13, Color.LTGRAY));
-        sensorSource = createText("", 14, Color.rgb(96, 205, 255));
-        layout.addView(sensorSource);
-        sensorStatus = createText(getString(R.string.sensor_waiting), 13, Color.LTGRAY);
-        layout.addView(sensorStatus);
-        layout.addView(createText(getString(R.string.measurement_hint), 13, Color.LTGRAY));
-        motionPermissionButton = createButton(R.string.enable_step_detector,
-                view -> requestMotionPermission());
-        motionPermissionButton.setVisibility(View.GONE);
-        layout.addView(motionPermissionButton);
-        layout.addView(createText(getString(R.string.genre_label), 18, Color.WHITE));
+        LinearLayout cadenceCard = createCard(R.drawable.bg_cadence);
+        dashboard.addView(cadenceCard);
+        TextView title = createText(getString(R.string.title), 14, secondaryText);
+        title.setLetterSpacing(0.07f);
+        cadenceCard.addView(title);
+        FrameLayout dial = new FrameLayout(this);
+        int dialHeight = Math.round(180 * Math.max(1f, getResources().getConfiguration().fontScale));
+        cadenceCard.addView(dial, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(dialHeight)));
+        cadenceRing = new CadenceRingView(this);
+        dial.addView(cadenceRing, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout readout = new LinearLayout(this);
+        readout.setOrientation(LinearLayout.VERTICAL);
+        readout.setGravity(Gravity.CENTER);
+        cadenceText = createText("0", 58, primaryText);
+        cadenceText.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        cadenceText.setPadding(0, 0, 0, 0);
+        readout.addView(cadenceText);
+        readout.addView(createText(getString(R.string.steps_per_minute), 14, secondaryText));
+        dial.addView(readout, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        liveCadenceText = createText(getString(R.string.live_cadence, 0), 15, primaryText);
+        cadenceCard.addView(liveCadenceText);
+        statusText = createText(getString(R.string.start_running), 14, getColor(R.color.primary));
+        cadenceCard.addView(statusText);
+
+        LinearLayout styleCard = createCard(R.drawable.bg_card);
+        styleCard.addView(sectionTitle(R.string.genre_label));
         Spinner genres = new Spinner(this);
         genres.setContentDescription(getString(R.string.genre_label));
         ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
-                R.array.genres, android.R.layout.simple_spinner_item);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                R.array.genres, R.layout.spinner_item);
+        adapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
         genres.setAdapter(adapter);
         genres.setSelection(genre.ordinal());
         genres.setMinimumHeight(dp(48));
@@ -1034,6 +1216,7 @@ public final class MainActivity extends Activity
                     clearSong();
                     stability.reset();
                     stableCadence = 0;
+                    feedbackRefreshPending = false;
                     musicStatus.setText(R.string.waiting_for_cadence);
                 }
             }
@@ -1042,54 +1225,242 @@ public final class MainActivity extends Activity
             public void onNothingSelected(AdapterView<?> parent) {
             }
         });
-        layout.addView(genres, new LinearLayout.LayoutParams(
+        styleCard.addView(genres, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        layout.addView(createText(getString(R.string.genre_hint), 13, Color.LTGRAY));
-        musicStatus = createText(getString(R.string.waiting_for_cadence), 15, Color.LTGRAY);
-        songText = createText(getString(R.string.no_song), 19, Color.WHITE);
-        layout.addView(musicStatus);
-        layout.addView(songText);
-        connectButton = createButton(isSpotifyConfigured()
-                ? R.string.connect_spotify : R.string.spotify_setup, view -> connectSpotify(true));
-        layout.addView(connectButton);
-        layout.addView(createButton(R.string.spotify_settings, view -> showSpotifySetup()));
-        spotifyStatus = createText(getString(isSpotifyConfigured()
-                ? R.string.spotify_connect_hint : R.string.spotify_setup_required), 14, Color.LTGRAY);
-        layout.addView(spotifyStatus);
+        styleCard.addView(createText(getString(R.string.match_rules), 12, secondaryText));
+
+        LinearLayout songCard = createCard(R.drawable.bg_card);
+        dashboard.addView(songCard);
+        songCard.addView(sectionTitle(R.string.your_soundtrack));
+        searchProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        searchProgress.setIndeterminate(true);
+        searchProgress.setVisibility(View.GONE);
+        songCard.addView(searchProgress, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(4)));
+        songInfo = new LinearLayout(this);
+        songInfo.setOrientation(LinearLayout.VERTICAL);
+        songInfo.setPadding(0, dp(10), 0, dp(12));
+        songText = createText(getString(R.string.no_song), 24, primaryText);
+        songText.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        songText.setGravity(Gravity.START);
+        songArtistText = createText(getString(R.string.song_empty_hint), 15, secondaryText);
+        songArtistText.setGravity(Gravity.START);
+        songMetaText = createText("", 13, getColor(R.color.secondary));
+        songMetaText.setGravity(Gravity.START);
+        songMetaText.setVisibility(View.GONE);
+        songInfo.addView(songText);
+        songInfo.addView(songArtistText);
+        songInfo.addView(songMetaText);
+        songCard.addView(songInfo);
+        likeButton = createButton(R.string.like, view -> rateSelectedSong(SongFeedback.Rating.LIKED));
+        dislikeButton = createButton(R.string.dislike, view -> rateSelectedSong(SongFeedback.Rating.DISLIKED));
+        addButtonRow(songCard, likeButton, dislikeButton);
+        feedbackStatus = createText(getString(R.string.feedback_hint), 13, secondaryText);
+        feedbackStatus.setGravity(Gravity.START);
+        feedbackStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        songCard.addView(feedbackStatus);
+        undoFeedbackButton = createButton(R.string.undo_feedback, view -> undoFeedback());
+        undoFeedbackButton.setVisibility(View.GONE);
+        songCard.addView(undoFeedbackButton);
         playButton = createButton(R.string.play_match, view -> playSelectedSong());
+        stylePrimaryButton(playButton);
         playButton.setEnabled(false);
-        layout.addView(playButton);
-        nextButton = createButton(R.string.next_match, view -> {
-            notifyOnTrackStart = false;
-            pendingTrackChangeChimeId = null;
-            stopTrackChangeChime();
-            refreshSuggestions();
-            if (!selectNextMatch(SelectionReason.MANUAL_SKIP)) {
-                manualSearchRequested = true;
-                searchGate.requestAnother();
-                musicStatus.setText(R.string.waiting_for_search);
-            } else {
-                showCachedMatchStatus();
-                playSelectedSong();
-            }
-        });
+        nextButton = createButton(R.string.next_match, view -> skipToNextSong());
         nextButton.setEnabled(false);
-        layout.addView(nextButton);
+        addButtonRow(songCard, playButton, nextButton);
         openButton = createButton(R.string.open_spotify, view -> openInSpotify());
         openButton.setEnabled(false);
-        layout.addView(openButton);
-        layout.addView(createText(getString(R.string.music_attribution), 12, Color.LTGRAY));
-        scroll.addView(layout);
+        songCard.addView(openButton);
+        musicStatus = createText(getString(R.string.waiting_for_cadence), 13, secondaryText);
+        musicStatus.setGravity(Gravity.START);
+        songCard.addView(musicStatus);
+        dashboard.addView(styleCard);
+
+        LinearLayout connectionCard = createCard(R.drawable.bg_card);
+        dashboard.addView(connectionCard);
+        connectionCard.addView(sectionTitle(R.string.connection_title));
+        connectionBadge = createText(getString(R.string.badge_offline), 13, secondaryText);
+        connectionBadge.setGravity(Gravity.START);
+        connectionCard.addView(connectionBadge);
+        connectButton = createButton(isSpotifyConfigured()
+                ? R.string.connect_spotify : R.string.spotify_setup, view -> connectSpotify(true));
+        connectionCard.addView(connectButton);
+        spotifyStatus = createText(getString(isSpotifyConfigured()
+                ? R.string.spotify_connect_hint : R.string.spotify_setup_required), 13, secondaryText);
+        spotifyStatus.setGravity(Gravity.START);
+        connectionCard.addView(spotifyStatus);
+        connectionCard.addView(createButton(R.string.spotify_settings, view -> showSpotifySetup()));
+
+        LinearLayout detailsCard = createCard(R.drawable.bg_card);
+        dashboard.addView(detailsCard);
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setVisibility(View.GONE);
+        Button detailsButton = createButton(R.string.show_run_details, view -> {
+            boolean showing = details.getVisibility() == View.VISIBLE;
+            details.setVisibility(showing ? View.GONE : View.VISIBLE);
+            ((Button) view).setText(showing ? R.string.show_run_details : R.string.hide_run_details);
+            if (!showing) {
+                animateEntrance(details);
+            }
+        });
+        detailsCard.addView(detailsButton);
+        detailsCard.addView(details);
+        sensorSource = createText("", 14, getColor(R.color.secondary));
+        details.addView(sensorSource);
+        sensorStatus = createText(getString(R.string.sensor_waiting), 13, secondaryText);
+        details.addView(sensorStatus);
+        details.addView(createText(getString(R.string.measurement_hint), 13, secondaryText));
+        details.addView(createText(getString(R.string.song_change_hint), 13, secondaryText));
+        details.addView(createText(getString(R.string.genre_hint), 13, secondaryText));
+        tasteSummary = createText("", 14, primaryText);
+        details.addView(tasteSummary);
+        details.addView(createButton(R.string.reset_taste, view ->
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.reset_taste)
+                        .setMessage(R.string.reset_taste_confirmation)
+                        .setPositiveButton(R.string.reset_taste, (dialog, which) -> {
+                            feedback = new SongFeedback();
+                            preferences.edit().remove("song_feedback").apply();
+                            undoFeedbackId = null;
+                            invalidateFeedbackSearch();
+                            updateFeedbackButtons();
+                            feedbackStatus.setText(R.string.feedback_reset);
+                        })
+                        .setNegativeButton(android.R.string.cancel, null).show()));
+        motionPermissionButton = createButton(R.string.enable_step_detector,
+                view -> requestMotionPermission());
+        motionPermissionButton.setVisibility(View.GONE);
+        dashboard.addView(motionPermissionButton);
+        dashboard.addView(createText(getString(R.string.music_attribution), 12, secondaryText));
+        dashboard.addView(createText(getString(R.string.app_version, BuildConfig.VERSION_NAME), 12, secondaryText));
+        scroll.addView(dashboard);
+        updateFeedbackButtons();
         return scroll;
+    }
+
+    private LinearLayout createCard(int background) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(20), dp(16), dp(20), dp(16));
+        card.setBackgroundResource(background);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.bottomMargin = dp(16);
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private TextView sectionTitle(int text) {
+        TextView view = createText(getString(text), 14, getColor(R.color.text_secondary));
+        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        view.setGravity(Gravity.START);
+        view.setLetterSpacing(0.06f);
+        return view;
+    }
+
+    private void addButtonRow(LinearLayout parent, Button first, Button second) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setBaselineAligned(false);
+        row.setPadding(0, dp(8), 0, dp(8));
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        left.setMarginEnd(dp(6));
+        LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        right.setMarginStart(dp(6));
+        row.addView(first, left);
+        row.addView(second, right);
+        parent.addView(row);
+    }
+
+    private void stylePrimaryButton(Button button) {
+        button.setBackgroundResource(R.drawable.bg_button_primary);
+        button.setTextColor(getColorStateList(R.color.button_primary_text));
     }
 
     private Button createButton(int text, View.OnClickListener listener) {
         Button button = new Button(this);
         button.setText(text);
+        button.setAllCaps(false);
+        button.setTextSize(15);
+        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        button.setTextColor(getColorStateList(R.color.button_text));
+        button.setBackgroundResource(R.drawable.bg_button);
+        button.setBackgroundTintList(null);
+        button.setMinHeight(dp(52));
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
         button.setOnClickListener(listener);
-        button.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(8);
+        button.setLayoutParams(params);
         return button;
+    }
+
+    private void renderSong(boolean animate) {
+        songText.setText(selectedSong == null ? getString(R.string.no_song) : selectedSong.title);
+        songArtistText.setText(selectedSong == null ? getString(R.string.song_empty_hint) : selectedSong.artist);
+        songMetaText.setVisibility(selectedSong == null ? View.GONE : View.VISIBLE);
+        if (selectedSong != null) {
+            songMetaText.setText(getString(R.string.song_meta, selectedSong.bpm, selectedSong.popularity));
+        }
+        updateFeedbackButtons();
+        if (animate) {
+            animateEntrance(songInfo);
+        }
+    }
+
+    private boolean animationsEnabled() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? ValueAnimator.areAnimatorsEnabled()
+                : Settings.Global.getFloat(getContentResolver(), Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0;
+    }
+
+    private void animateEntrance(View view) {
+        view.animate().cancel();
+        if (!animationsEnabled()) {
+            view.setAlpha(1f);
+            view.setTranslationY(0);
+            return;
+        }
+        view.setAlpha(0.65f);
+        view.setTranslationY(dp(8));
+        view.animate().alpha(1f).translationY(0).setDuration(220)
+                .setInterpolator(new DecelerateInterpolator()).start();
+    }
+
+    private void animateFeedback(View view) {
+        if (feedbackAnimator != null) {
+            feedbackAnimator.end();
+        }
+        if (!animationsEnabled()) {
+            return;
+        }
+        feedbackAnimator = ObjectAnimator.ofPropertyValuesHolder(view,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.06f, 1f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.06f, 1f));
+        feedbackAnimator.setDuration(240);
+        feedbackAnimator.start();
+    }
+
+    private void cancelUiAnimations() {
+        if (cadenceRing != null) {
+            cadenceRing.stopAnimation();
+        }
+        if (dashboard != null) {
+            dashboard.animate().cancel();
+            dashboard.setAlpha(1f);
+            dashboard.setTranslationY(0);
+        }
+        if (songInfo != null) {
+            songInfo.animate().cancel();
+            songInfo.setAlpha(1f);
+            songInfo.setTranslationY(0);
+        }
+        if (feedbackAnimator != null) {
+            feedbackAnimator.end();
+            feedbackAnimator = null;
+        }
     }
 
     private TextView createText(String text, float textSizeSp, int color) {

@@ -1,6 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Running Cadence</string>
+    <string name="dashboard_title">Find your rhythm.</string>
+    <string name="dashboard_subtitle">Your pace. Your soundtrack.</string>
+    <string name="your_soundtrack">YOUR SOUNDTRACK</string>
+    <string name="connection_title">SPOTIFY CONNECTION</string>
+    <string name="badge_connected">Connected and ready</string>
+    <string name="badge_connecting">Connecting</string>
+    <string name="badge_offline">Not connected</string>
+    <string name="match_rules">Within 2 BPM / Popularity 60+</string>
+    <string name="song_empty_hint">Start running to find your next track.</string>
+    <string name="song_meta">%1$.1f BPM  /  Popularity %2$d</string>
+    <string name="app_version">Running Cadence %1$s</string>
+    <string name="show_run_details">Run details &amp; preferences</string>
+    <string name="hide_run_details">Hide run details</string>
+    <string name="like">Like</string>
+    <string name="liked">Liked</string>
+    <string name="dislike">Dislike &amp; skip</string>
+    <string name="disliked">Disliked</string>
+    <string name="feedback_hint">Shape your next run. Like for more of this; dislike to skip and hear less like it.</string>
+    <string name="song_liked">Liked %1$s. Future recommendations will use songs like this.</string>
+    <string name="song_disliked">Disliked %1$s. Skipping it and steering future recommendations away.</string>
+    <string name="song_feedback_removed">Removed your rating for %1$s.</string>
+    <string name="undo_feedback">Undo last rating</string>
+    <string name="feedback_undone">Last rating undone. Future recommendations will reflect the change.</string>
+    <string name="feedback_load_failed">Saved music preferences could not be read. You can reset them in Run details &amp; preferences.</string>
+    <string name="taste_summary">Your taste: %1$d liked / %2$d disliked</string>
+    <string name="reset_taste">Reset music preferences</string>
+    <string name="reset_taste_confirmation">Clear all likes and dislikes saved on this device? Spotify settings will not change.</string>
+    <string name="feedback_reset">Music preferences reset. Recommendations will start fresh.</string>
+    <string name="pausing_disliked_track">Stopping the disliked song while finding your next match...</string>
+    <string name="disliked_track_paused">Disliked song stopped. Waiting for another matching track.</string>
+    <string name="no_next_after_dislike">The disliked song is excluded. No alternative within 2 BPM of average %1$d was found. Try Skip or another style.</string>
     <string name="title">30-second average cadence</string>
     <string name="live_cadence">Live cadence: %1$d steps per minute</string>
     <string name="song_change_hint">Automatic song changes only when the song differs from the average by more than 5 BPM. New songs match within 2 BPM.</string>
@@ -39,8 +70,8 @@
     <string name="waiting_for_cadence">Music matching starts once your cadence stabilizes.</string>
     <string name="searching_music">Searching popular songs near %1$d BPM...</string>
     <string name="cadence_changed">Pace changed or measurement paused. Waiting for steady cadence.</string>
-    <string name="no_matching_music">No new popular cached song within 2 BPM of average %1$d. Verified %2$d of %3$d recommendations; below popularity 60: %4$d; unavailable: %5$d. Try another match or genre.</string>
-    <string name="matches_found">Average %1$d: %2$d popular matches within 2 BPM. Verified %3$d of %4$d recommendations; below popularity 60: %5$d; unavailable: %6$d.</string>
+    <string name="no_matching_music">No match near %1$d BPM. Verified %2$d/%3$d; low popularity: %4$d; unavailable: %5$d; disliked: %6$d. Try Skip or another style.</string>
+    <string name="matches_found">%2$d matches near %1$d BPM. Verified %3$d/%4$d; low popularity: %5$d; unavailable: %6$d; disliked: %7$d.</string>
     <string name="cached_waiting_cadence">Cached %1$d verified popular songs. Waiting for steady cadence to choose a match.</string>
     <string name="music_search_failed">Music lookup failed: %1$s Check your connection, then tap Skip to next song.</string>
     <string name="rate_limited">ReccoBeats rate limit reached. Wait %1$d seconds before retrying.</string>
@@ -48,7 +79,6 @@
     <string name="retry_countdown">Skip to next song (search in %1$d s)</string>
     <string name="next_match">Skip to next song</string>
     <string name="no_next_matching_song">No other popular song within 2 BPM of average %1$d was found. Nothing was skipped. Try again or change style.</string>
-    <string name="song_details">%1$s\n%2$s\n%3$.1f BPM | Popularity: %4$d/100</string>
     <string name="no_song">No song matched yet</string>
     <string name="play_match">Play matched song</string>
     <string name="open_spotify">Open song in Spotify</string>

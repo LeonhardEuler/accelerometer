@@ -76,7 +76,7 @@ Kotlin or server component.
   arriving during a cadence change are retained rather than discarded. A genre
   change clears the cache. This improves coverage but cannot guarantee a match
   at every BPM.
-- A new search is considered when the current song and cached alternatives do
+- A new search is considered when the current song and cached alternatives
   cannot satisfy the retention/search thresholds at a new stable smoothed cadence,
   when the genre changes, or when explicitly
   requested with **Skip to next song** after cached alternatives are exhausted.
@@ -88,6 +88,43 @@ Kotlin or server component.
   Leaving it cancels pending searches and disconnects App Remote; Spotify handles
   its own background playback. This is not a background running tracker or an
   automatically maintained playlist.
+
+## Dashboard and music preferences
+
+The dashboard has a cadence dial, a style selector and a separate song card with
+large playback and feedback controls. The dial animates toward the smoothed
+cadence; song changes slide/fade in and ratings have a short press animation.
+Animations respect the system animator setting and stop when the screen is
+hidden. Diagnostic sensor information and preference reset are under
+**Run details & preferences**.
+
+- **Like** keeps the current track playing and adds it to your recommendation
+  preferences. Tap **Liked** again to remove the rating.
+- **Dislike & skip** excludes that track immediately, selects another eligible
+  cached song, and influences subsequent recommendations. If there is no ready
+  alternative, the app pauses the disliked track it controls and waits for
+  another matching song rather than replaying it.
+- The next ReccoBeats lookup combines the selected style seed with up to **four
+  recent liked tracks**. Up to **five recent dislikes** are sent as
+  `negativeSeeds`. Likes and dislikes influence all styles; the style seed is
+  retained as the genre reference. If that reference track is itself disliked,
+  it remains a style anchor but is blocked from playback and is not sent as a
+  contradictory negative seed.
+- Every disliked Spotify track ID is blocked locally, not just the latest five:
+  cached results, new responses, selection and playback all honor the block.
+  Related recordings with different Spotify IDs are not automatically blocked.
+- Feedback changes cancel obsolete lookups and refresh recommendations subject
+  to the existing cooldown/rate limits. Likes do not interrupt a matching song.
+  Dislikes and manual skips do not trigger the tempo-change chime.
+- **Undo last rating** reverses the latest change. **Reset music preferences**
+  clears all ratings after confirmation. Preferences are saved in private app
+  storage and survive app restarts and updates; they do not change Spotify's
+  own Liked Songs library.
+
+Similarity is provided by ReccoBeats, not an on-device model: positive and
+negative seeds guide its ranking and cannot guarantee the genre or similarity
+of every result. BPM, popularity, smoothing and zero-cadence pause rules remain
+unchanged, so a personalized query can still have no qualifying matches.
 
 ## Automatic playback and stopping
 
@@ -122,8 +159,9 @@ and no changes to the phone's media volume. Zero-cadence stopping operates while
 this screen is active; measurement is suspended when it is hidden. Returning
 requires acquiring a new step rhythm before automatic playback resumes.
 
-ReccoBeats requires no API key. Only the genre seed, target cadence, popularity
-preference and candidate track IDs are sent; raw accelerometer samples stay on the device. Spotify playback
+ReccoBeats requires no API key. The genre seed, recent liked/disliked track IDs,
+target cadence, popularity preference and candidate track IDs are sent to its
+API; raw accelerometer samples and the full rating history stay on the device. Spotify playback
 requires Spotify authorization separately.
 
 ### Running-style seeds
